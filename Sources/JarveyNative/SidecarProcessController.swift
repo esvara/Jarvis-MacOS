@@ -2,7 +2,7 @@ import Foundation
 @MainActor
 final class SidecarProcessController {
   private var process: Process?
-  private let port = 4818
+  private let port = LocalEndpoints.sidecarPort
   private let authToken: String
 
   init(authToken: String = "") {
@@ -196,7 +196,7 @@ enum SidecarStartupError: LocalizedError {
     case .failedToBecomeHealthy:
       return "The Jarvis sidecar did not become healthy in time."
     case .staleUnauthorizedSidecar:
-      return "A sidecar from a previous session is still running on port 4818. Quit it and relaunch Jarvis."
+      return "A sidecar from a previous session is still running on port \(LocalEndpoints.sidecarPort). Quit it and relaunch Jarvis."
     }
   }
 }

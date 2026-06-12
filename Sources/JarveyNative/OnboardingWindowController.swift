@@ -230,7 +230,7 @@ private struct OnboardingView: View {
         Text("Connect to OpenAI")
           .font(.system(size: 22, weight: .bold))
 
-        Text("Jarvis uses OpenAI's realtime voice API to understand and respond to your commands. Enter your API key to get started.")
+        Text("Jarvis uses OpenAI's Realtime voice API, which requires a platform API key — a ChatGPT subscription or OAuth sign-in cannot be used. Voice usage is billed to your OpenAI API account.")
           .font(.system(size: 13))
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -270,18 +270,58 @@ private struct OnboardingView: View {
         }
 
         if model.settings.hasApiKey {
-          HStack(spacing: 4) {
-            Image(systemName: "checkmark.circle.fill")
-              .font(.system(size: 11))
-              .foregroundStyle(.green)
-            Text("API key saved")
-              .font(.system(size: 11))
-              .foregroundStyle(.green.opacity(0.7))
-          }
-          .transition(.opacity.combined(with: .scale(scale: 0.9)))
+          apiKeyValidationStatus
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
         }
       }
       .padding(.horizontal, 40)
+      .task {
+        if model.settings.hasApiKey && model.apiKeyValidation == .unknown {
+          await model.validateApiKey()
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var apiKeyValidationStatus: some View {
+    switch model.apiKeyValidation {
+    case .checking:
+      HStack(spacing: 5) {
+        ProgressView()
+          .controlSize(.mini)
+        Text("Verifying key with OpenAI…")
+          .font(.system(size: 11))
+          .foregroundStyle(.secondary)
+      }
+    case .valid:
+      HStack(spacing: 4) {
+        Image(systemName: "checkmark.circle.fill")
+          .font(.system(size: 11))
+          .foregroundStyle(.green)
+        Text("API key verified — Realtime access confirmed")
+          .font(.system(size: 11))
+          .foregroundStyle(.green.opacity(0.7))
+      }
+    case .invalid(let reason):
+      HStack(alignment: .top, spacing: 4) {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .font(.system(size: 11))
+          .foregroundStyle(.orange)
+        Text(reason)
+          .font(.system(size: 11))
+          .foregroundStyle(.orange.opacity(0.85))
+          .multilineTextAlignment(.leading)
+      }
+    case .unknown:
+      HStack(spacing: 4) {
+        Image(systemName: "checkmark.circle.fill")
+          .font(.system(size: 11))
+          .foregroundStyle(.green)
+        Text("API key saved")
+          .font(.system(size: 11))
+          .foregroundStyle(.green.opacity(0.7))
+      }
     }
   }
 

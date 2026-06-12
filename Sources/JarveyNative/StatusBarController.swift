@@ -91,9 +91,8 @@ private struct StatusBarSettingsView: View {
   @State private var selectedTab: SettingsTab = .general
 
   private static let realtimeVoices: [VoiceOption] = [
-    VoiceOption(id: "cedar", name: "Cedar", detail: "Masculina natural"),
-    VoiceOption(id: "marin", name: "Marin", detail: "Natural"),
-    VoiceOption(id: "cedar", name: "Cedar", detail: "Warm"),
+    VoiceOption(id: "cedar", name: "Cedar", detail: "Deep, natural (default)"),
+    VoiceOption(id: "marin", name: "Marin", detail: "Warm, natural"),
     VoiceOption(id: "alloy", name: "Alloy", detail: "Balanced"),
     VoiceOption(id: "ash", name: "Ash", detail: "Calm"),
     VoiceOption(id: "ballad", name: "Ballad", detail: "Expressive"),

@@ -528,6 +528,11 @@ final class InputActionServer: @unchecked Sendable {
       throw InputActionError.invalidField("\(target.displayName) is not running and could not be opened")
     }
 
+    // Reset before delivering so a thrown error can't leave the previous
+    // delivery's outcome behind for the response handler to report.
+    lastDeliveryVerified = false
+    lastDeliveryHandoff = false
+
     let outcome = try await pasteAndVerify(
       trimmed,
       into: app,

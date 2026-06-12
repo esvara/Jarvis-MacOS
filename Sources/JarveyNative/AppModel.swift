@@ -5,6 +5,13 @@ private enum VoiceConnectionError: Error {
   case timeout
 }
 
+enum ApiKeyValidationState: Equatable {
+  case unknown
+  case checking
+  case valid
+  case invalid(String)
+}
+
 @MainActor
 final class AppModel: ObservableObject {
   @Published var health: HealthSnapshot = .offline
@@ -21,6 +28,7 @@ final class AppModel: ObservableObject {
     voiceRuntimeSupported: false
   )
   @Published var documentsAccessGranted = false
+  @Published var apiKeyValidation: ApiKeyValidationState = .unknown
   @Published var pendingApproval: ApprovalRequest?
   @Published var pendingRealtimeApproval: VoiceApprovalState?
   @Published var activeTaskId: String?
@@ -194,9 +202,29 @@ final class AppModel: ObservableObject {
       }
 
       syncPhase()
+      await validateApiKey()
     } catch {
       errorMessage = error.localizedDescription
       syncPhase()
+    }
+  }
+
+  /// Mints a throwaway Realtime client secret — the exact call voice needs —
+  /// so a bad or credit-less key surfaces here instead of at first connect.
+  func validateApiKey() async {
+    guard settings.hasApiKey else {
+      apiKeyValidation = .unknown
+      return
+    }
+    apiKeyValidation = .checking
+    do {
+      let result = try await client.validateApiKey()
+      apiKeyValidation = result.valid
+        ? .valid
+        : .invalid(result.reason ?? "OpenAI rejected the API key.")
+    } catch {
+      // Sidecar unreachable is not a key problem; leave state undetermined.
+      apiKeyValidation = .unknown
     }
   }
 
@@ -667,6 +695,23 @@ final class AppModel: ObservableObject {
     }
     let age = max(0, Int(Date().timeIntervalSince(date)))
     return age <= 1 ? "Live" : "\(age)s ago"
+  }
+
+  /// Outcome of the most recent prompt delivery, from the sidecar's event log.
+  /// (label, confirmed) — confirmed=false means blind delivery: pasted and sent
+  /// but Accessibility could not read the text back.
+  var lastDeliveryBadge: (label: String, confirmed: Bool)? {
+    guard let event = codexEvents.first(where: { $0.type == "sent" }) else {
+      return nil
+    }
+    switch event.detail {
+    case "delivery:verified":
+      return ("Verified", true)
+    case "delivery:blind":
+      return ("Sent (unconfirmed — check the agent window)", false)
+    default:
+      return nil
+    }
   }
 
   var codexPmStateLabel: String {
@@ -1146,22 +1191,23 @@ final class AppModel: ObservableObject {
       return
     }
 
+    let english = assistantLanguage == "en"
     let announcement: String?
     switch event.type {
     case "started":
-      announcement = "Jarvis inició la tarea."
+      announcement = english ? "Jarvis started the task." : "Jarvis inició la tarea."
     case "delegated":
-      announcement = "Jarvis está trabajando en segundo plano."
+      announcement = english ? "Jarvis is working in the background." : "Jarvis está trabajando en segundo plano."
     case "tool_started":
-      announcement = "Jarvis está usando una herramienta."
+      announcement = english ? "Jarvis is using a tool." : "Jarvis está usando una herramienta."
     case "approval_requested":
-      announcement = "Jarvis necesita aprobación."
+      announcement = english ? "Jarvis needs approval." : "Jarvis necesita aprobación."
     case "completed":
-      announcement = "Jarvis terminó la tarea."
+      announcement = english ? "Jarvis finished the task." : "Jarvis terminó la tarea."
     case "failed":
-      announcement = "Jarvis encontró un error."
+      announcement = english ? "Jarvis hit an error." : "Jarvis encontró un error."
     case "cancelled":
-      announcement = "Jarvis detuvo la tarea."
+      announcement = english ? "Jarvis stopped the task." : "Jarvis detuvo la tarea."
     default:
       announcement = nil
     }

@@ -172,6 +172,12 @@ async function withTimeout<T>(
   ]);
 }
 
+function withErrorCode(message: string, code: unknown): string {
+  return typeof code === "string" && code && !message.includes(code)
+    ? `${message} (${code})`
+    : message;
+}
+
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -182,13 +188,13 @@ function extractErrorMessage(error: unknown): string {
     if (typeof obj.error === "object" && obj.error !== null) {
       const inner = obj.error as Record<string, unknown>;
       if (typeof inner.message === "string") {
-        return inner.message;
+        return withErrorCode(inner.message, inner.code);
       }
       // Double-nested: transport wraps API events
       if (typeof inner.error === "object" && inner.error !== null) {
         const deep = inner.error as Record<string, unknown>;
         if (typeof deep.message === "string") {
-          return deep.message;
+          return withErrorCode(deep.message, deep.code);
         }
       }
     }
@@ -305,7 +311,20 @@ async function requestJson<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed for ${path} (${response.status})`);
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text) as { error?: unknown };
+      if (typeof parsed.error === "string") {
+        detail = parsed.error;
+      }
+    } catch {
+      // keep raw text
+    }
+    throw new Error(
+      detail
+        ? `${detail} (HTTP ${response.status} from ${path})`
+        : `Request failed for ${path} (HTTP ${response.status})`
+    );
   }
 
   return (await response.json()) as T;
@@ -474,13 +493,31 @@ function flushPlayback() {
 // have Jarvis narrate completion, blockers, or needed approvals.
 // ---------------------------------------------------------------------------
 
-const MONITOR_POLL_MS = 30_000;
-const MONITOR_MAX_MS = 30 * 60_000;
+// Defaults; overridden from settings at connect time.
+let monitorPollMs = 30_000;
+let monitorMaxMs = 30 * 60_000;
+/** Mirrors the language baked into the session instructions at connect time. */
+let sessionLanguage: "es" | "en" = "es";
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function applyMonitorSettings(pollSeconds?: number, maxMinutes?: number) {
+  if (typeof pollSeconds === "number" && Number.isFinite(pollSeconds)) {
+    monitorPollMs = clamp(Math.round(pollSeconds), 10, 300) * 1000;
+  }
+  if (typeof maxMinutes === "number" && Number.isFinite(maxMinutes)) {
+    monitorMaxMs = clamp(Math.round(maxMinutes), 5, 240) * 60_000;
+  }
+}
 let monitorTimerId: number | null = null;
 let monitorAgent: "codex" | "claude" | null = null;
 let monitorStartedAt = 0;
 let monitorLastState = "";
 let monitorSawWorking = false;
+let monitorConsecutiveFailures = 0;
+const MONITOR_MAX_FAILURES = 5;
 
 function agentDisplayName(agent: string): string {
   return agent === "codex" ? "Codex" : "Claude";
@@ -494,6 +531,7 @@ function stopAgentMonitor() {
   monitorAgent = null;
   monitorLastState = "";
   monitorSawWorking = false;
+  monitorConsecutiveFailures = 0;
 }
 
 /** Returns false when the session is busy and the narration must be retried. */
@@ -506,10 +544,29 @@ function narrateMonitorUpdate(text: string): boolean {
     return false;
   }
   session.sendMessage(
-    `[Monitor automático de agentes — no es el usuario] ${text} Informa al usuario en una sola frase breve y natural.`
+    sessionLanguage === "en"
+      ? `[Automatic agent monitor — not the user] ${text} Tell the user in one short, natural sentence.`
+      : `[Monitor automático de agentes — no es el usuario] ${text} Informa al usuario en una sola frase breve y natural.`
   );
   return true;
 }
+
+const MONITOR_TEXTS = {
+  es: {
+    needsUser: (name: string, summary: string) =>
+      `${name} necesita una aprobación o interacción del usuario. Resumen: ${summary}`,
+    offline: (name: string) => `${name} dejó de estar disponible (la app parece cerrada).`,
+    finished: (name: string, summary: string) =>
+      `${name} parece haber terminado la tarea delegada. Resumen de su ventana: ${summary}`
+  },
+  en: {
+    needsUser: (name: string, summary: string) =>
+      `${name} needs an approval or input from the user. Summary: ${summary}`,
+    offline: (name: string) => `${name} is no longer available (the app seems closed).`,
+    finished: (name: string, summary: string) =>
+      `${name} appears to have finished the delegated task. Window summary: ${summary}`
+  }
+} as const;
 
 function startAgentMonitor(agent: "codex" | "claude") {
   stopAgentMonitor();
@@ -522,7 +579,7 @@ function startAgentMonitor(agent: "codex" | "claude") {
         stopAgentMonitor();
         return;
       }
-      if (performance.now() - monitorStartedAt > MONITOR_MAX_MS) {
+      if (performance.now() - monitorStartedAt > monitorMaxMs) {
         stopAgentMonitor();
         return;
       }
@@ -530,9 +587,23 @@ function startAgentMonitor(agent: "codex" | "claude") {
       try {
         status = await requestJson<CodexPmStatus>("/codex/pm-status", {
           method: "POST",
-          body: JSON.stringify({ agent: monitorAgent, quiet: true })
+          body: JSON.stringify({ agent: monitorAgent, quiet: true }),
+          // Without a timeout a hung sidecar request would stall the poll
+          // silently; cap it well under the poll interval.
+          signal: AbortSignal.timeout(15_000)
         });
+        monitorConsecutiveFailures = 0;
       } catch {
+        monitorConsecutiveFailures += 1;
+        if (monitorConsecutiveFailures >= MONITOR_MAX_FAILURES) {
+          const name = agentDisplayName(monitorAgent);
+          narrateMonitorUpdate(
+            sessionLanguage === "en"
+              ? `The automatic monitor lost contact with the local service and stopped watching ${name}. Ask me for status manually.`
+              : `El monitor automático perdió contacto con el servicio local y dejó de vigilar a ${name}. Pídeme el estado manualmente.`
+          );
+          stopAgentMonitor();
+        }
         return;
       }
       const name = agentDisplayName(monitorAgent);
@@ -544,27 +615,28 @@ function startAgentMonitor(agent: "codex" | "claude") {
         return;
       }
 
+      const texts = MONITOR_TEXTS[sessionLanguage];
       if (state === "needs_user") {
-        if (narrateMonitorUpdate(`${name} necesita una aprobación o interacción del usuario. Resumen: ${status.summary}`)) {
+        if (narrateMonitorUpdate(texts.needsUser(name, status.summary))) {
           stopAgentMonitor();
         }
         return;
       }
       if (state === "offline") {
-        if (narrateMonitorUpdate(`${name} dejó de estar disponible (la app parece cerrada).`)) {
+        if (narrateMonitorUpdate(texts.offline(name))) {
           stopAgentMonitor();
         }
         return;
       }
       if (state === "idle" && monitorSawWorking) {
-        if (narrateMonitorUpdate(`${name} parece haber terminado la tarea delegada. Resumen de su ventana: ${status.summary}`)) {
+        if (narrateMonitorUpdate(texts.finished(name, status.summary))) {
           stopAgentMonitor();
         }
         return;
       }
       monitorLastState = state;
     })();
-  }, MONITOR_POLL_MS);
+  }, monitorPollMs);
 }
 
 async function startAudioIO() {
@@ -791,6 +863,8 @@ async function connect(initialMuted = false) {
       throw new Error("OpenAI API key is not configured.");
     }
     const godModeEnabled = currentSettings.codexIntegration?.godMode === true;
+    sessionLanguage = currentSettings.language === "en" ? "en" : "es";
+    applyMonitorSettings(currentSettings.monitorPollSeconds, currentSettings.monitorMaxMinutes);
 
     setPhase("connecting");
 

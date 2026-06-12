@@ -62,7 +62,7 @@ final class VoiceBridgeController: NSObject, VoiceRuntimeControlling {
       webView.topAnchor.constraint(equalTo: hostView.topAnchor)
     ])
 
-    var request = URLRequest(url: URL(string: "http://127.0.0.1:4818/voice-host")!)
+    var request = URLRequest(url: LocalEndpoints.sidecarBaseURL.appending(path: "voice-host"))
     if !authToken.isEmpty {
       request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
     }

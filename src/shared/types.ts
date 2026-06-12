@@ -204,6 +204,10 @@ export interface SettingsData {
   voice: string;
   voiceInputMode: VoiceInputMode;
   language: AssistantLanguage;
+  /** Seconds between proactive agent-monitor polls after a delegation. */
+  monitorPollSeconds: number;
+  /** Minutes before the proactive agent monitor stops polling. */
+  monitorMaxMinutes: number;
   debugMode: boolean;
   autonomyMode: AutonomyMode;
   browserControlMode: BrowserControlMode;
@@ -235,6 +239,8 @@ export interface SettingsUpdate {
   voice?: string;
   voiceInputMode?: VoiceInputMode;
   language?: AssistantLanguage;
+  monitorPollSeconds?: number;
+  monitorMaxMinutes?: number;
   debugMode?: boolean;
   appName?: string;
   autonomyMode?: AutonomyMode;

@@ -291,6 +291,18 @@ private struct ControlCenterView: View {
               }
             }
 
+            if let delivery = model.lastDeliveryBadge {
+              HStack(spacing: 5) {
+                Image(systemName: delivery.confirmed ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                  .font(.system(size: 10))
+                  .foregroundStyle(delivery.confirmed ? .green : .orange)
+                Text("Last delivery: \(delivery.label)")
+                  .font(.system(size: 11, weight: .medium))
+                  .foregroundStyle(delivery.confirmed ? Color.green.opacity(0.8) : Color.orange.opacity(0.9))
+                  .lineLimit(2)
+              }
+            }
+
             Text(model.codexPmStatus.summary)
               .font(.system(size: 12))
               .foregroundStyle(.white.opacity(0.82))

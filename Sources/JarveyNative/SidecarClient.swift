@@ -6,7 +6,7 @@ struct SidecarClient: Sendable {
   private static let requestTimeout: TimeInterval = 8
 
   init(
-    baseURL: URL = URL(string: "http://127.0.0.1:4818")!,
+    baseURL: URL = LocalEndpoints.sidecarBaseURL,
     authToken: String = ""
   ) {
     self.baseURL = baseURL
@@ -23,6 +23,14 @@ struct SidecarClient: Sendable {
 
   func updateSettings(_ patch: SettingsPatch) async throws -> SettingsData {
     try await request(path: "/settings", method: "PUT", body: patch)
+  }
+
+  func validateApiKey() async throws -> ApiKeyValidation {
+    try await request(
+      path: "/openai/validate-key",
+      method: "POST",
+      body: EmptyBody()
+    )
   }
 
   func recentMemories(limit: Int = 8) async throws -> [MemoryRecord] {
@@ -201,6 +209,11 @@ struct SidecarClient: Sendable {
     guard !authToken.isEmpty else { return }
     request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
   }
+}
+
+struct ApiKeyValidation: Decodable, Equatable {
+  let valid: Bool
+  let reason: String?
 }
 
 private struct ErrorResponse: Decodable {

@@ -1,5 +1,16 @@
 import Foundation
 
+/// Single source of truth for the Node sidecar's loopback port.
+/// Override with the JARVIS_SIDECAR_PORT environment variable.
+enum LocalEndpoints {
+  static let sidecarPort: Int =
+    ProcessInfo.processInfo.environment["JARVIS_SIDECAR_PORT"].flatMap(Int.init) ?? 4818
+
+  static var sidecarBaseURL: URL {
+    URL(string: "http://127.0.0.1:\(sidecarPort)")!
+  }
+}
+
 struct ToolRegistryConfig: Codable {
   var enableWebSearch: Bool
   var enableCodeInterpreter: Bool

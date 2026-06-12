@@ -47,9 +47,11 @@ It can also open the files your agents produce (PDF, Word, PowerPoint, Markdown�
 | Requirement | Details |
 |---|---|
 | **OS** | macOS 14 (Sonoma) or newer |
-| **API key** | OpenAI API key |
+| **API key** | OpenAI **platform API key** (required — see below) |
 | **Permissions** | Microphone, Accessibility, file access (Documents); Screen Recording optional |
 | **Agent apps** | Codex and/or Claude installed in `/Applications` |
+
+> **Note — API key only:** Jarvis is built on the OpenAI **Realtime API** (`gpt-realtime` models), which is only available through the OpenAI Platform with an API key and pay-per-use billing. A ChatGPT subscription (Plus/Pro/Business) or "Sign in with ChatGPT" OAuth **cannot** power the voice layer — OAuth tokens are scoped to Codex and do not work against the Realtime API. Your subscriptions still matter: the Codex and Claude apps that Jarvis delegates work to run on their own accounts; the API key only pays for Jarvis's voice.
 
 For building from source you also need:
 

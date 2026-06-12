@@ -180,7 +180,8 @@ export class CodexBridge {
     return await this.recordResult("sent", deliveryNote, command, {
       needsUserApproval: false,
       nextAction: `Jarvis can now read ${agentName} status and summarize progress.`,
-      pmPrompt: command
+      pmPrompt: command,
+      detail: sendResult.verified ? "delivery:verified" : "delivery:blind"
     });
   }
 
@@ -337,11 +338,14 @@ export class CodexBridge {
     status: CodexCommandResult["status"],
     summary: string,
     command: string,
-    extra: Pick<CodexCommandResult, "needsUserApproval"> & Pick<CodexCommandResult, "nextAction"> & Pick<CodexCommandResult, "pmPrompt">
+    extra: Pick<CodexCommandResult, "needsUserApproval"> &
+      Pick<CodexCommandResult, "nextAction"> &
+      Pick<CodexCommandResult, "pmPrompt"> & { detail?: string }
   ): Promise<CodexCommandResult> {
     const event = await this.appendEvent({
       type: status === "observed" ? "status" : status,
       summary,
+      detail: extra.detail,
       command: command || undefined
     });
     return {

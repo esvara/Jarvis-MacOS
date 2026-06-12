@@ -16,7 +16,7 @@ import type {
   MemorySearchInput,
   SettingsUpdate
 } from "../shared/types";
-import { createRealtimeClientSecret } from "./createRealtimeClientSecret";
+import { createRealtimeClientSecret, validateApiKey } from "./createRealtimeClientSecret";
 import { CodexBridge } from "./codexBridge";
 import { logger } from "./logger";
 import { FileSettingsStore } from "./settings/fileSettingsStore";
@@ -359,6 +359,16 @@ async function main() {
       if (method === "PUT" && pathname === "/settings") {
         const update = await readJson<SettingsUpdate>(request);
         sendJson(response, 200, settingsStore.update(update));
+        return;
+      }
+
+      if (method === "POST" && pathname === "/openai/validate-key") {
+        const apiKey = settingsStore.getApiKey();
+        if (!apiKey) {
+          sendJson(response, 200, { valid: false, reason: "OpenAI API key is not configured." });
+          return;
+        }
+        sendJson(response, 200, await validateApiKey(apiKey));
         return;
       }
 

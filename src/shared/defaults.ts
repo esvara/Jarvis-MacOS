@@ -18,6 +18,8 @@ export const defaultSettings: SettingsData = {
   voice: DEFAULT_VOICE,
   voiceInputMode: DEFAULT_VOICE_INPUT_MODE,
   language: DEFAULT_ASSISTANT_LANGUAGE,
+  monitorPollSeconds: 30,
+  monitorMaxMinutes: 30,
   debugMode: false,
   autonomyMode: DEFAULT_AUTONOMY_MODE,
   browserControlMode: DEFAULT_BROWSER_CONTROL_MODE,
