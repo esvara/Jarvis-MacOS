@@ -113,20 +113,20 @@ declare global {
   interface Window {
     webkit?: {
       messageHandlers?: {
-        jarveyVoice?: {
+        jarvisVoice?: {
           postMessage: (payload: unknown) => void;
         };
       };
     };
-    __JARVEY_AUTH_TOKEN__?: string;
-    jarveyVoiceBridge?: {
+    __JARVIS_AUTH_TOKEN__?: string;
+    jarvisVoiceBridge?: {
       receive: (command: Command) => Promise<unknown>;
     };
   }
 }
 
 const SIDECAR_BASE =
-  (globalThis as { __JARVEY_SIDECAR_BASE__?: string }).__JARVEY_SIDECAR_BASE__ ??
+  (globalThis as { __JARVIS_SIDECAR_BASE__?: string }).__JARVIS_SIDECAR_BASE__ ??
   "http://127.0.0.1:4818";
 
 const SAMPLE_RATE = 24000;
@@ -213,7 +213,7 @@ function extractErrorMessage(error: unknown): string {
 }
 
 function postMessage(type: string, payload?: Record<string, unknown>) {
-  window.webkit?.messageHandlers?.jarveyVoice?.postMessage({
+  window.webkit?.messageHandlers?.jarvisVoice?.postMessage({
     type,
     ...(payload ?? {})
   });
@@ -300,8 +300,8 @@ async function requestJson<T>(
 ): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("Content-Type", headers.get("Content-Type") ?? "application/json");
-  if (window.__JARVEY_AUTH_TOKEN__ && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${window.__JARVEY_AUTH_TOKEN__}`);
+  if (window.__JARVIS_AUTH_TOKEN__ && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${window.__JARVIS_AUTH_TOKEN__}`);
   }
 
   const response = await fetch(`${SIDECAR_BASE}${path}`, {
@@ -1230,7 +1230,7 @@ async function rejectApproval(message?: string, alwaysReject = false) {
   setPhase("thinking");
 }
 
-window.jarveyVoiceBridge = {
+window.jarvisVoiceBridge = {
   async receive(command: Command) {
     switch (command.type) {
       case "connect":

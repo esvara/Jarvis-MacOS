@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="${1:-$(pwd)}"
 APP_BUNDLE="$ROOT_DIR/dist-native/Jarvis.app"
-APP_BINARY="$APP_BUNDLE/Contents/MacOS/JarveyNative"
+APP_BINARY="$APP_BUNDLE/Contents/MacOS/JarvisNative"
 
 if [[ ! -x "$APP_BINARY" ]]; then
   echo "Missing native app binary at $APP_BINARY. Run npm run build:native first." >&2

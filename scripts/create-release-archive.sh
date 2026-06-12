@@ -6,7 +6,7 @@ ROOT_DIR="${1:-$(pwd)}"
 APP_DIR="$ROOT_DIR/dist-native/Samantha.app"
 APP_VERSION="${APP_VERSION:-$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version" "$ROOT_DIR/package.json")}"
 APP_ARCHITECTURE="${APP_ARCHITECTURE:-$(uname -m)}"
-DMG_NAME="Jarvey-${APP_VERSION}-macos-${APP_ARCHITECTURE}.dmg"
+DMG_NAME="Jarvis-${APP_VERSION}-macos-${APP_ARCHITECTURE}.dmg"
 DMG_PATH="$ROOT_DIR/dist-native/$DMG_NAME"
 
 if [[ ! -d "$APP_DIR" ]]; then
@@ -16,14 +16,14 @@ fi
 
 rm -f "$DMG_PATH"
 
-SPEC_FILE="$(mktemp "${TMPDIR:-/tmp}/jarvey-dmg-spec.XXXXXX.json")"
+SPEC_FILE="$(mktemp "${TMPDIR:-/tmp}/jarvis-dmg-spec.XXXXXX.json")"
 cleanup() { rm -f "$SPEC_FILE"; }
 trap cleanup EXIT
 
 cat > "$SPEC_FILE" <<JSON
 {
-  "title": "Jarvey",
-  "icon": "$APP_DIR/Contents/Resources/JarveyAppIcon.icns",
+  "title": "Jarvis",
+  "icon": "$APP_DIR/Contents/Resources/JarvisAppIcon.icns",
   "background": "$ROOT_DIR/assets/dmg-background.png",
   "background-color": "#0f0f12",
   "icon-size": 80,

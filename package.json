@@ -1,9 +1,9 @@
 {
-  "name": "jarvey-desktop",
+  "name": "jarvis-desktop",
   "version": "0.1.4",
   "private": false,
   "type": "module",
-  "author": "Jarvey contributors",
+  "author": "Jarvis contributors",
   "license": "MIT",
   "description": "Voice-first macOS desktop agent with a native Swift overlay, a Node sidecar, durable memory, and native computer use.",
   "keywords": [

@@ -44,7 +44,7 @@ function parsePort(): number {
     }
   }
 
-  const fromEnv = Number.parseInt(process.env.JARVEY_PORT ?? "", 10);
+  const fromEnv = Number.parseInt(process.env.JARVIS_PORT ?? "", 10);
   if (Number.isFinite(fromEnv) && fromEnv > 0) {
     return fromEnv;
   }
@@ -53,20 +53,20 @@ function parsePort(): number {
 }
 
 function parseAssetsRoot(): string {
-  return parseFlagValue("--assets-root") ?? process.env.JARVEY_ASSETS_ROOT ?? process.cwd();
+  return parseFlagValue("--assets-root") ?? process.env.JARVIS_ASSETS_ROOT ?? process.cwd();
 }
 
 function parseWorkingDirectory(): string {
   return (
     parseFlagValue("--working-directory") ??
-    process.env.JARVEY_WORKING_DIRECTORY ??
+    process.env.JARVIS_WORKING_DIRECTORY ??
     process.env.HOME ??
     process.cwd()
   );
 }
 
 function parseAuthToken(): string {
-  return parseFlagValue("--auth-token") ?? process.env.JARVEY_AUTH_TOKEN ?? "";
+  return parseFlagValue("--auth-token") ?? process.env.JARVIS_AUTH_TOKEN ?? "";
 }
 
 function localResponseHeaders(contentType?: string): Record<string, string> {
@@ -229,7 +229,7 @@ async function main() {
   const workingDirectory = parseWorkingDirectory();
   const authToken = parseAuthToken();
   if (!authToken) {
-    logger.warn("Sidecar started without JARVEY_AUTH_TOKEN; sensitive endpoints will reject requests.");
+    logger.warn("Sidecar started without JARVIS_AUTH_TOKEN; sensitive endpoints will reject requests.");
   }
   const settingsStore = new FileSettingsStore();
   const backendRuntime = new BackendRuntime(
@@ -328,17 +328,17 @@ async function main() {
   </head>
   <body>
     <script>
-      window.__JARVEY_SIDECAR_BASE__ = "http://${HOST}:${parsePort()}";
-      window.__JARVEY_AUTH_TOKEN__ = ${JSON.stringify(authToken)};
+      window.__JARVIS_SIDECAR_BASE__ = "http://${HOST}:${parsePort()}";
+      window.__JARVIS_AUTH_TOKEN__ = ${JSON.stringify(authToken)};
       window.onerror = function(msg, src, line, col, err) {
-        window.webkit?.messageHandlers?.jarveyVoice?.postMessage({
+        window.webkit?.messageHandlers?.jarvisVoice?.postMessage({
           type: "error",
           message: "JS Error: " + msg + " at " + src + ":" + line + ":" + col
         });
       };
       window.addEventListener("unhandledrejection", function(e) {
         var msg = e.reason instanceof Error ? e.reason.message : String(e.reason);
-        window.webkit?.messageHandlers?.jarveyVoice?.postMessage({
+        window.webkit?.messageHandlers?.jarvisVoice?.postMessage({
           type: "error",
           message: "Unhandled rejection: " + msg
         });

@@ -195,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct JarveyNativeApp: App {
+struct JarvisNativeApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
   var body: some Scene {

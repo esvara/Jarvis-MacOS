@@ -4,8 +4,8 @@ set -euo pipefail
 
 SOURCE_PNG="${1:?Missing source PNG path.}"
 OUTPUT_ICNS="${2:?Missing output .icns path.}"
-ICONSET_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/jarvey-iconset.XXXXXX")"
-ICONSET_DIR="$ICONSET_ROOT/JarveyAppIcon.iconset"
+ICONSET_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/jarvis-iconset.XXXXXX")"
+ICONSET_DIR="$ICONSET_ROOT/JarvisAppIcon.iconset"
 
 cleanup() {
   rm -rf "$ICONSET_ROOT"

@@ -530,7 +530,7 @@ export class CodexBridge {
     return text
       .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g, "[redacted-openai-key]")
       .replace(/\bBearer\s+[A-Za-z0-9._-]{20,}\b/g, "Bearer [redacted-token]")
-      .replace(/\b(JARVEY_AUTH_TOKEN|OPENAI_API_KEY)=\S+/g, "$1=[redacted]")
+      .replace(/\b(JARVIS_AUTH_TOKEN|OPENAI_API_KEY)=\S+/g, "$1=[redacted]")
       .replace(/\b(api[_ -]?key|token|secret|password):\s*\S+/gi, "$1: [redacted]");
   }
 

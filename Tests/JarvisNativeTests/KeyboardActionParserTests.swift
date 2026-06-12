@@ -1,4 +1,4 @@
-@testable import JarveyNative
+@testable import JarvisNative
 import XCTest
 
 final class KeyboardActionParserTests: XCTestCase {

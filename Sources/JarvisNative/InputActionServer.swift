@@ -4,7 +4,7 @@ import ApplicationServices
 import AppKit
 
 /// Lightweight HTTP server that accepts input-action requests from the sidecar
-/// and executes them via CGEvent inside JarveyNative's process (which has
+/// and executes them via CGEvent inside JarvisNative's process (which has
 /// Accessibility permission). Listens on 127.0.0.1:<port>.
 final class InputActionServer: @unchecked Sendable {
   private let listener: NWListener

@@ -2,8 +2,8 @@ import Foundation
 
 enum AppIdentity {
   static let appName = "Jarvis"
-  static let voiceMessageHandlerName = "jarveyVoice"
-  static let voiceBridgeObjectName = "jarveyVoiceBridge"
+  static let voiceMessageHandlerName = "jarvisVoice"
+  static let voiceBridgeObjectName = "jarvisVoiceBridge"
 
   static func applicationSupportRoot(fileManager: FileManager = .default) -> URL {
     let baseDirectory =
@@ -18,7 +18,7 @@ enum AppIdentity {
     // Prefer SPM's generated resource bundle when available (swift build / debug),
     // fall back to the main app bundle (packaged .app).
     if let spmBundle = Bundle(url: Bundle.main.bundleURL
-          .appending(path: "JarveyNative_JarveyNative.bundle")) {
+          .appending(path: "JarvisNative_JarvisNative.bundle")) {
       return spmBundle
     }
     return Bundle.main

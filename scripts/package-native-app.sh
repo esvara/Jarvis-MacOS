@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="${1:-$(pwd)}"
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
-PRODUCT_NAME="JarveyNative"
+PRODUCT_NAME="JarvisNative"
 APP_NAME="Jarvis.app"
 BUILD_DIR="$ROOT_DIR/.build/$BUILD_CONFIGURATION"
 EXECUTABLE_PATH="$BUILD_DIR/$PRODUCT_NAME"
@@ -22,8 +22,8 @@ SIDECAR_DIST_DIR="$ROOT_DIR/dist-sidecar"
 VOICE_DIST_DIR="$ROOT_DIR/dist-voice"
 APP_ICON_SOURCE="$ROOT_DIR/assets/branding/jarvis-icon.png"
 STATUS_BAR_ICON_SOURCE="$ROOT_DIR/assets/branding/jarvis-menubar.png"
-APP_ICON_NAME="JarveyAppIcon.icns"
-STATUS_BAR_ICON_NAME="JarveyStatusBarIcon.png"
+APP_ICON_NAME="JarvisAppIcon.icns"
+STATUS_BAR_ICON_NAME="JarvisStatusBarIcon.png"
 # Prefer a pinned Node next to the repo (keeps better-sqlite3's ABI stable);
 # fall back to whatever node is on PATH. Override with HOST_NODE_BIN.
 PINNED_NODE_BIN="$ROOT_DIR/../tools/node-v22.22.2-darwin-arm64/bin/node"
@@ -69,20 +69,20 @@ chmod +x "$MACOS_DIR/$PRODUCT_NAME"
 cp -R "$SIDECAR_DIST_DIR" "$RUNTIME_DIR/"
 cp -R "$VOICE_DIST_DIR" "$RUNTIME_DIR/"
 cp "$STATUS_BAR_ICON_SOURCE" "$RESOURCES_DIR/$STATUS_BAR_ICON_NAME"
-LOGO_SOURCE="$ROOT_DIR/Sources/JarveyNative/Resources/JarveyLogoTransparent.png"
+LOGO_SOURCE="$ROOT_DIR/Sources/JarvisNative/Resources/JarvisLogoTransparent.png"
 if [[ -f "$LOGO_SOURCE" ]]; then
-  cp "$LOGO_SOURCE" "$RESOURCES_DIR/JarveyLogoTransparent.png"
+  cp "$LOGO_SOURCE" "$RESOURCES_DIR/JarvisLogoTransparent.png"
 fi
 
 zsh "$ROOT_DIR/scripts/generate-app-icon.sh" "$APP_ICON_SOURCE" "$RESOURCES_DIR/$APP_ICON_NAME"
-zsh "$ROOT_DIR/scripts/embed-node-runtime.sh" "$HOST_NODE_BIN" "$MACOS_DIR/JarveyNode" "$FRAMEWORKS_DIR"
+zsh "$ROOT_DIR/scripts/embed-node-runtime.sh" "$HOST_NODE_BIN" "$MACOS_DIR/JarvisNode" "$FRAMEWORKS_DIR"
 
 # Native modules must match the embedded Node ABI (npm installs may silently
 # swap in prebuilds for whatever node is on PATH).
-if ! "$APP_DIR/Contents/MacOS/JarveyNode" -e "require('better-sqlite3')" >/dev/null 2>&1; then
+if ! "$APP_DIR/Contents/MacOS/JarvisNode" -e "require('better-sqlite3')" >/dev/null 2>&1; then
   echo "better-sqlite3 ABI mismatch with embedded Node - rebuilding..." >&2
   (cd "$ROOT_DIR" && PATH="$(dirname "$HOST_NODE_BIN"):$PATH" npm rebuild better-sqlite3 >/dev/null 2>&1) || true
-  if ! "$APP_DIR/Contents/MacOS/JarveyNode" -e "require('better-sqlite3')" >/dev/null 2>&1; then
+  if ! "$APP_DIR/Contents/MacOS/JarvisNode" -e "require('better-sqlite3')" >/dev/null 2>&1; then
     echo "ERROR: better-sqlite3 still does not load under the embedded Node runtime." >&2
     exit 1
   fi
@@ -97,7 +97,7 @@ cat > "$INFO_PLIST" <<PLIST
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>JarveyNative</string>
+  <string>JarvisNative</string>
   <key>CFBundleIdentifier</key>
   <string>${APP_BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>

@@ -50,12 +50,12 @@ const INPUT_SERVER_APP_PASTE_URL = `${INPUT_SERVER_BASE_URL}/app/paste`;
 const INPUT_SERVER_APP_CLICK_URL = `${INPUT_SERVER_BASE_URL}/app/click`;
 
 function authHeaders(): HeadersInit {
-  const token = process.env.JARVEY_AUTH_TOKEN;
+  const token = process.env.JARVIS_AUTH_TOKEN;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// POST a JSON action to JarveyNative's input action server.
-// JarveyNative has Accessibility permission and posts CGEvents from its own process.
+// POST a JSON action to JarvisNative's input action server.
+// JarvisNative has Accessibility permission and posts CGEvents from its own process.
 // Actions are normalized before dispatch so the native side receives a strict schema.
 async function sendInputAction(action: NativeInputAction): Promise<void> {
   const res = await fetch(INPUT_SERVER_URL, {
@@ -81,7 +81,7 @@ export class NativeComputerBridge {
   private static readonly screenPermissionError =
     "Screen Recording permission is required. Grant access in Privacy & Security > Screen Recording.";
 
-  /** Check if JarveyNative's InputActionServer is reachable. */
+  /** Check if JarvisNative's InputActionServer is reachable. */
   async healthCheck(): Promise<{
     available: boolean;
     version?: string;
@@ -363,7 +363,7 @@ export class NativeComputerBridge {
     }
   }
 
-  // All input actions go through JarveyNative's InputActionServer.
+  // All input actions go through JarvisNative's InputActionServer.
 
   async click(x: number, y: number, button: GPTMouseButton): Promise<void> {
     controlLog("INFO", `action: click (${x}, ${y}) ${button}`);

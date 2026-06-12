@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class StatusBarController: NSObject {
-  private static let statusBarIconResourceName = "JarveyStatusBarIcon"
+  private static let statusBarIconResourceName = "JarvisStatusBarIcon"
 
   private let statusItem: NSStatusItem
   private let popover: NSPopover
@@ -153,7 +153,7 @@ private struct StatusBarSettingsView: View {
           .fill(Color.white.opacity(0.06))
           .frame(width: 32, height: 32)
 
-        if let url = AppIdentity.resourceBundle.url(forResource: "JarveyLogoTransparent", withExtension: "png"),
+        if let url = AppIdentity.resourceBundle.url(forResource: "JarvisLogoTransparent", withExtension: "png"),
            let nsImage = NSImage(contentsOf: url) {
           Image(nsImage: nsImage)
             .resizable()

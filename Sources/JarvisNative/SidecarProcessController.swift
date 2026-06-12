@@ -43,7 +43,7 @@ final class SidecarProcessController {
     process.currentDirectoryURL = workingDirectory
     var environment = ProcessInfo.processInfo.environment
     if !authToken.isEmpty {
-      environment["JARVEY_AUTH_TOKEN"] = authToken
+      environment["JARVIS_AUTH_TOKEN"] = authToken
     }
     process.environment = environment
     process.standardOutput = Pipe()
@@ -117,7 +117,7 @@ final class SidecarProcessController {
       return nil
     }
 
-    let nodeURL = executableURL.deletingLastPathComponent().appending(path: "JarveyNode")
+    let nodeURL = executableURL.deletingLastPathComponent().appending(path: "JarvisNode")
     guard FileManager.default.isExecutableFile(atPath: nodeURL.path) else {
       return nil
     }
@@ -130,7 +130,7 @@ final class SidecarProcessController {
       return URL(fileURLWithPath: fromArguments, isDirectory: true)
     }
 
-    if let override = ProcessInfo.processInfo.environment["JARVEY_PROJECT_ROOT"], !override.isEmpty {
+    if let override = ProcessInfo.processInfo.environment["JARVIS_PROJECT_ROOT"], !override.isEmpty {
       return URL(fileURLWithPath: override, isDirectory: true)
     }
 

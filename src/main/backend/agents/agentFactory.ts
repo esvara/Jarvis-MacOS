@@ -130,7 +130,7 @@ Batch related edits logically instead of producing noisy tool spam.
 Avoid destructive or irreversible host operations. Do not handle payments, purchases, password/token entry, mass deletion, system-wide changes, or highly sensitive legal/financial data without explicit user approval.
 Use browser/web search tools for research and the GUI specialist when the visible browser state, login flow, forms, or page layout matters.
 Use durable memory only for stable preferences or defaults.
-For requests aimed at the Codex app, prefer the local Codex Bridge endpoint over GUI control: POST to http://127.0.0.1:4818/codex/command with Authorization: Bearer $JARVEY_AUTH_TOKEN and modeHint "assist" unless the user explicitly enabled Drive.
+For requests aimed at the Codex app, prefer the local Codex Bridge endpoint over GUI control: POST to http://127.0.0.1:4818/codex/command with Authorization: Bearer $JARVIS_AUTH_TOKEN and modeHint "assist" unless the user explicitly enabled Drive.
 Never claim success unless a tool result confirms the outcome.
 If asked to create, edit, save, or open a file, verify the exact file path exists with a tool result before reporting success, and include that exact path.
 OpenClaw is ${toolRegistry.enableOpenClawBackend ? "enabled" : "disabled"} for this run.

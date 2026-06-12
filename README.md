@@ -17,7 +17,7 @@
 
 Jarvis is a native macOS app you control with your voice. Instead of operating the computer itself, it delegates all real work to local AI agent apps — **Codex** (default) and **Claude** — through their own graphical interfaces:
 
-1. You speak a request ("dile a Claude que revise el reporte…").
+1. You speak a request ("ask Claude to review the report…").
 2. Jarvis composes a clean, natural prompt in your language.
 3. It activates the agent app, opens a **new chat**, pastes the prompt into the chat box, verifies it landed through Accessibility, and presses Enter.
 4. An automatic monitor polls the agent every 30 seconds and tells you out loud when it finishes, gets blocked, or needs your approval.
@@ -38,7 +38,7 @@ It can also open the files your agents produce (PDF, Word, PowerPoint, Markdown�
 
 | Component | Role |
 |---|---|
-| Swift app (`Sources/JarveyNative`) | Menu-bar app, control window, onboarding, and an input-action server (`127.0.0.1:4819`) that drives other apps via CGEvent + Accessibility |
+| Swift app (`Sources/JarvisNative`) | Menu-bar app, control window, onboarding, and an input-action server (`127.0.0.1:4819`) that drives other apps via CGEvent + Accessibility |
 | Node sidecar (`src/sidecar`) | Local API (`127.0.0.1:4818`): delegation bridge, agent status, file opening, settings, memory |
 | Voice runtime (`src/voice`) | Runs in a hidden `WKWebView` using `@openai/agents-realtime`; defines the voice persona and tools |
 
