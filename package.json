@@ -1,0 +1,75 @@
+{
+  "name": "jarvey-desktop",
+  "version": "0.1.4",
+  "private": false,
+  "type": "module",
+  "author": "Jarvey contributors",
+  "license": "MIT",
+  "description": "Voice-first macOS desktop agent with a native Swift overlay, a Node sidecar, durable memory, and native computer use.",
+  "keywords": [
+    "macos",
+    "desktop-agent",
+    "openai",
+    "computer-use",
+    "swift",
+    "voice"
+  ],
+  "engines": {
+    "node": ">=20 <24"
+  },
+  "os": [
+    "darwin"
+  ],
+  "files": [
+    ".env.example",
+    ".github/workflows/ci.yml",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "Package.swift",
+    "README.md",
+    "SECURITY.md",
+    "Sources",
+    "Tests",
+    "patches",
+    "scripts",
+    "src",
+    "tsconfig.json",
+    "tsup.sidecar.config.ts",
+    "tsup.voice.config.ts"
+  ],
+  "scripts": {
+    "dev": "npm run build:sidecar && npm run build:voice && npm run build:native && npm run launch:native",
+    "dev:sidecar": "tsup --watch --config tsup.sidecar.config.ts",
+    "dev:voice": "tsup --watch --config tsup.voice.config.ts",
+    "sidecar": "node dist-sidecar/sidecar.cjs",
+    "build": "npm run build:sidecar && npm run build:voice && npm run build:native",
+    "build:release": "npm run build && zsh ./scripts/create-release-archive.sh \"$PWD\"",
+    "build:sidecar": "tsup --config tsup.sidecar.config.ts",
+    "build:voice": "tsup --config tsup.voice.config.ts",
+    "build:native": "swift build && ./scripts/package-native-app.sh \"$PWD\"",
+    "launch:native": "./scripts/run-native-app.sh \"$PWD\"",
+    "clean": "rm -rf .build dist dist-electron dist-native dist-sidecar dist-voice",
+    "ci": "npm run typecheck && npm test && npm run build:sidecar && npm run build:voice && swift test && npm run check:public",
+    "check:public": "zsh ./scripts/check-public-repo.sh \"$PWD\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "start": "npm run launch:native",
+    "postinstall": "npx patch-package"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.5.4",
+    "better-sqlite3": "^12.6.2",
+    "nanoid": "^5.1.6",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.5.2",
+    "appdmg": "^0.6.6",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^4.0.0"
+  }
+}

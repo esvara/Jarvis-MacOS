@@ -1,0 +1,322 @@
+diff --git a/node_modules/@openai/agents-core/dist/runner/toolExecution.js b/node_modules/@openai/agents-core/dist/runner/toolExecution.js
+index 30f9ee8..bd6c625 100644
+--- a/node_modules/@openai/agents-core/dist/runner/toolExecution.js
++++ b/node_modules/@openai/agents-core/dist/runner/toolExecution.js
+@@ -265,44 +265,57 @@ async function runApprovedFunctionTool(deps, toolRun) {
+ /**
+  * @internal
+  */
+-// Internal helper: dispatch a computer action and return a screenshot (sync/async)
+-async function _runComputerActionAndScreenshot(computer, toolCall, runContext) {
+-    const action = toolCall.action;
+-    let screenshot;
+-    // Dispatch based on action type string (assume action.type exists)
++// Internal helper: dispatch a single computer action
++async function _dispatchSingleAction(computer, action, runContext) {
+     switch (action.type) {
+         case 'click':
+             await computer.click(action.x, action.y, action.button, runContext);
+             break;
+         case 'double_click':
+-            await computer.doubleClick(action.x, action.y, runContext);
++            await computer.doubleClick(action.x, action.y, runContext, action.button ?? 'left');
+             break;
+         case 'drag':
+             await computer.drag(action.path.map((p) => [p.x, p.y]), runContext);
+             break;
+-        case 'keypress':
+-            await computer.keypress(action.keys, runContext);
++        case 'keypress': {
++            const keys = Array.isArray(action.keys)
++                ? action.keys
++                : typeof action.key === 'string' && action.key.length > 0
++                    ? [action.key]
++                    : [];
++            await computer.keypress(keys, runContext);
+             break;
++        }
+         case 'move':
+             await computer.move(action.x, action.y, runContext);
+             break;
+         case 'screenshot':
+-            screenshot = await computer.screenshot(runContext);
+-            break;
++            return await computer.screenshot(runContext);
+         case 'scroll':
+-            await computer.scroll(action.x, action.y, action.scroll_x, action.scroll_y, runContext);
++            await computer.scroll(action.x, action.y, typeof action.scroll_x === 'number' ? action.scroll_x : typeof action.delta_x === 'number' ? action.delta_x : typeof action.deltaX === 'number' ? action.deltaX : 0, typeof action.scroll_y === 'number' ? action.scroll_y : typeof action.delta_y === 'number' ? action.delta_y : typeof action.deltaY === 'number' ? action.deltaY : 0, runContext);
+             break;
+         case 'type':
+             await computer.type(action.text, runContext);
+             break;
+         case 'wait':
+-            await computer.wait(runContext);
++            await computer.wait(runContext, typeof action.ms === 'number' ? action.ms : typeof action.duration_ms === 'number' ? action.duration_ms : 1000);
+             break;
+         default:
+-            action; // ensures that we handle every action we know of
+-            // Unknown action, just take screenshot
+             break;
+     }
++    return undefined;
++}
++// Internal helper: dispatch a computer action and return a screenshot (sync/async)
++async function _runComputerActionAndScreenshot(computer, toolCall, runContext) {
++    // Support both new `actions` array format (gpt-5.4) and legacy single `action`
++    const actions = toolCall.actions ?? (toolCall.action ? [toolCall.action] : []);
++    let screenshot;
++    for (const action of actions) {
++        const result = await _dispatchSingleAction(computer, action, runContext);
++        if (typeof result !== 'undefined') {
++            screenshot = result;
++        }
++    }
+     if (typeof screenshot !== 'undefined') {
+         return screenshot;
+     }
+diff --git a/node_modules/@openai/agents-core/dist/runner/toolExecution.mjs b/node_modules/@openai/agents-core/dist/runner/toolExecution.mjs
+index a42953c..ecccc58 100644
+--- a/node_modules/@openai/agents-core/dist/runner/toolExecution.mjs
++++ b/node_modules/@openai/agents-core/dist/runner/toolExecution.mjs
+@@ -252,44 +252,57 @@ async function runApprovedFunctionTool(deps, toolRun) {
+ /**
+  * @internal
+  */
+-// Internal helper: dispatch a computer action and return a screenshot (sync/async)
+-async function _runComputerActionAndScreenshot(computer, toolCall, runContext) {
+-    const action = toolCall.action;
+-    let screenshot;
+-    // Dispatch based on action type string (assume action.type exists)
++// Internal helper: dispatch a single computer action
++async function _dispatchSingleAction(computer, action, runContext) {
+     switch (action.type) {
+         case 'click':
+             await computer.click(action.x, action.y, action.button, runContext);
+             break;
+         case 'double_click':
+-            await computer.doubleClick(action.x, action.y, runContext);
++            await computer.doubleClick(action.x, action.y, runContext, action.button ?? 'left');
+             break;
+         case 'drag':
+             await computer.drag(action.path.map((p) => [p.x, p.y]), runContext);
+             break;
+-        case 'keypress':
+-            await computer.keypress(action.keys, runContext);
++        case 'keypress': {
++            const keys = Array.isArray(action.keys)
++                ? action.keys
++                : typeof action.key === 'string' && action.key.length > 0
++                    ? [action.key]
++                    : [];
++            await computer.keypress(keys, runContext);
+             break;
++        }
+         case 'move':
+             await computer.move(action.x, action.y, runContext);
+             break;
+         case 'screenshot':
+-            screenshot = await computer.screenshot(runContext);
+-            break;
++            return await computer.screenshot(runContext);
+         case 'scroll':
+-            await computer.scroll(action.x, action.y, action.scroll_x, action.scroll_y, runContext);
++            await computer.scroll(action.x, action.y, typeof action.scroll_x === 'number' ? action.scroll_x : typeof action.delta_x === 'number' ? action.delta_x : typeof action.deltaX === 'number' ? action.deltaX : 0, typeof action.scroll_y === 'number' ? action.scroll_y : typeof action.delta_y === 'number' ? action.delta_y : typeof action.deltaY === 'number' ? action.deltaY : 0, runContext);
+             break;
+         case 'type':
+             await computer.type(action.text, runContext);
+             break;
+         case 'wait':
+-            await computer.wait(runContext);
++            await computer.wait(runContext, typeof action.ms === 'number' ? action.ms : typeof action.duration_ms === 'number' ? action.duration_ms : 1000);
+             break;
+         default:
+-            action; // ensures that we handle every action we know of
+-            // Unknown action, just take screenshot
+             break;
+     }
++    return undefined;
++}
++// Internal helper: dispatch a computer action and return a screenshot (sync/async)
++async function _runComputerActionAndScreenshot(computer, toolCall, runContext) {
++    // Support both new `actions` array format (gpt-5.4) and legacy single `action`
++    const actions = toolCall.actions ?? (toolCall.action ? [toolCall.action] : []);
++    let screenshot;
++    for (const action of actions) {
++        const result = await _dispatchSingleAction(computer, action, runContext);
++        if (typeof result !== 'undefined') {
++            screenshot = result;
++        }
++    }
+     if (typeof screenshot !== 'undefined') {
+         return screenshot;
+     }
+diff --git a/node_modules/@openai/agents-core/dist/types/protocol.d.ts b/node_modules/@openai/agents-core/dist/types/protocol.d.ts
+index f06e19f..2eae8f5 100644
+--- a/node_modules/@openai/agents-core/dist/types/protocol.d.ts
++++ b/node_modules/@openai/agents-core/dist/types/protocol.d.ts
+@@ -134,24 +134,38 @@ export declare const computerActions: z.ZodDiscriminatedUnion<[z.ZodObject<{
+     type: z.ZodLiteral<"double_click">;
+     x: z.ZodNumber;
+     y: z.ZodNumber;
++    button: z.ZodOptional<z.ZodEnum<{
++        left: "left";
++        right: "right";
++        wheel: "wheel";
++        back: "back";
++        forward: "forward";
++    }>>;
+ }, z.core.$strip>, z.ZodObject<{
+     type: z.ZodLiteral<"scroll">;
+     x: z.ZodNumber;
+     y: z.ZodNumber;
+-    scroll_x: z.ZodNumber;
+-    scroll_y: z.ZodNumber;
++    scroll_x: z.ZodOptional<z.ZodNumber>;
++    scroll_y: z.ZodOptional<z.ZodNumber>;
++    delta_x: z.ZodOptional<z.ZodNumber>;
++    deltaX: z.ZodOptional<z.ZodNumber>;
++    delta_y: z.ZodOptional<z.ZodNumber>;
++    deltaY: z.ZodOptional<z.ZodNumber>;
+ }, z.core.$strip>, z.ZodObject<{
+     type: z.ZodLiteral<"type">;
+     text: z.ZodString;
+ }, z.core.$strip>, z.ZodObject<{
+     type: z.ZodLiteral<"wait">;
++    ms: z.ZodOptional<z.ZodNumber>;
++    duration_ms: z.ZodOptional<z.ZodNumber>;
+ }, z.core.$strip>, z.ZodObject<{
+     type: z.ZodLiteral<"move">;
+     x: z.ZodNumber;
+     y: z.ZodNumber;
+ }, z.core.$strip>, z.ZodObject<{
+     type: z.ZodLiteral<"keypress">;
+-    keys: z.ZodArray<z.ZodString>;
++    keys: z.ZodOptional<z.ZodArray<z.ZodString>>;
++    key: z.ZodOptional<z.ZodString>;
+ }, z.core.$strip>, z.ZodObject<{
+     type: z.ZodLiteral<"drag">;
+     path: z.ZodArray<z.ZodObject<{
+diff --git a/node_modules/@openai/agents-core/dist/types/protocol.js b/node_modules/@openai/agents-core/dist/types/protocol.js
+index ebfd1b2..0fb1f41 100644
+--- a/node_modules/@openai/agents-core/dist/types/protocol.js
++++ b/node_modules/@openai/agents-core/dist/types/protocol.js
+@@ -217,19 +217,28 @@ exports.computerActions = zod_1.z.discriminatedUnion('type', [
+         type: zod_1.z.literal('double_click'),
+         x: zod_1.z.number(),
+         y: zod_1.z.number(),
++        button: zod_1.z.enum(['left', 'right', 'wheel', 'back', 'forward']).optional(),
+     }),
+     zod_1.z.object({
+         type: zod_1.z.literal('scroll'),
+         x: zod_1.z.number(),
+         y: zod_1.z.number(),
+-        scroll_x: zod_1.z.number(),
+-        scroll_y: zod_1.z.number(),
++        scroll_x: zod_1.z.number().optional(),
++        scroll_y: zod_1.z.number().optional(),
++        delta_x: zod_1.z.number().optional(),
++        deltaX: zod_1.z.number().optional(),
++        delta_y: zod_1.z.number().optional(),
++        deltaY: zod_1.z.number().optional(),
+     }),
+     zod_1.z.object({
+         type: zod_1.z.literal('type'),
+         text: zod_1.z.string(),
+     }),
+-    zod_1.z.object({ type: zod_1.z.literal('wait') }),
++    zod_1.z.object({
++        type: zod_1.z.literal('wait'),
++        ms: zod_1.z.number().optional(),
++        duration_ms: zod_1.z.number().optional(),
++    }),
+     zod_1.z.object({
+         type: zod_1.z.literal('move'),
+         x: zod_1.z.number(),
+@@ -237,7 +246,8 @@ exports.computerActions = zod_1.z.discriminatedUnion('type', [
+     }),
+     zod_1.z.object({
+         type: zod_1.z.literal('keypress'),
+-        keys: zod_1.z.array(zod_1.z.string()),
++        keys: zod_1.z.array(zod_1.z.string()).optional(),
++        key: zod_1.z.string().optional(),
+     }),
+     zod_1.z.object({
+         type: zod_1.z.literal('drag'),
+@@ -396,9 +406,13 @@ exports.ComputerUseCallItem = exports.ItemBase.extend({
+      */
+     status: zod_1.z.enum(['in_progress', 'completed', 'incomplete']),
+     /**
+-     * The action to be performed by the computer.
++     * The action to be performed by the computer (legacy single-action format).
++     */
++    action: exports.computerActions.optional(),
++    /**
++     * The actions to be performed by the computer (new multi-action format).
+      */
+-    action: exports.computerActions,
++    actions: zod_1.z.array(exports.computerActions).optional(),
+ });
+ exports.ComputerCallResultItem = exports.ItemBase.extend({
+     type: zod_1.z.literal('computer_call_result'),
+diff --git a/node_modules/@openai/agents-core/dist/types/protocol.mjs b/node_modules/@openai/agents-core/dist/types/protocol.mjs
+index 5c5d7b9..843aeef 100644
+--- a/node_modules/@openai/agents-core/dist/types/protocol.mjs
++++ b/node_modules/@openai/agents-core/dist/types/protocol.mjs
+@@ -213,19 +213,28 @@ export const computerActions = z.discriminatedUnion('type', [
+         type: z.literal('double_click'),
+         x: z.number(),
+         y: z.number(),
++        button: z.enum(['left', 'right', 'wheel', 'back', 'forward']).optional(),
+     }),
+     z.object({
+         type: z.literal('scroll'),
+         x: z.number(),
+         y: z.number(),
+-        scroll_x: z.number(),
+-        scroll_y: z.number(),
++        scroll_x: z.number().optional(),
++        scroll_y: z.number().optional(),
++        delta_x: z.number().optional(),
++        deltaX: z.number().optional(),
++        delta_y: z.number().optional(),
++        deltaY: z.number().optional(),
+     }),
+     z.object({
+         type: z.literal('type'),
+         text: z.string(),
+     }),
+-    z.object({ type: z.literal('wait') }),
++    z.object({
++        type: z.literal('wait'),
++        ms: z.number().optional(),
++        duration_ms: z.number().optional(),
++    }),
+     z.object({
+         type: z.literal('move'),
+         x: z.number(),
+@@ -233,7 +242,8 @@ export const computerActions = z.discriminatedUnion('type', [
+     }),
+     z.object({
+         type: z.literal('keypress'),
+-        keys: z.array(z.string()),
++        keys: z.array(z.string()).optional(),
++        key: z.string().optional(),
+     }),
+     z.object({
+         type: z.literal('drag'),
+@@ -392,9 +402,13 @@ export const ComputerUseCallItem = ItemBase.extend({
+      */
+     status: z.enum(['in_progress', 'completed', 'incomplete']),
+     /**
+-     * The action to be performed by the computer.
++     * The action to be performed by the computer (legacy single-action format).
++     */
++    action: computerActions.optional(),
++    /**
++     * The actions to be performed by the computer (new multi-action format).
+      */
+-    action: computerActions,
++    actions: z.array(computerActions).optional(),
+ });
+ export const ComputerCallResultItem = ItemBase.extend({
+     type: z.literal('computer_call_result'),

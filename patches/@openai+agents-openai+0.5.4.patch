@@ -1,0 +1,110 @@
+diff --git a/node_modules/@openai/agents-openai/dist/openaiResponsesModel.js b/node_modules/@openai/agents-openai/dist/openaiResponsesModel.js
+index 436b740..b119217 100644
+--- a/node_modules/@openai/agents-openai/dist/openaiResponsesModel.js
++++ b/node_modules/@openai/agents-openai/dist/openaiResponsesModel.js
+@@ -26,7 +26,8 @@ const HostedToolChoice = zod_1.z.enum([
+     'image_generation',
+     'mcp',
+     // Specialized local tools
+-    'computer_use_preview',
++    'computer',
++    'computer',
+     'shell',
+     'apply_patch',
+ ]);
+@@ -540,10 +541,7 @@ function converTool(tool) {
+     else if (tool.type === 'computer') {
+         return {
+             tool: {
+-                type: 'computer_use_preview',
+-                environment: tool.environment,
+-                display_width: tool.dimensions[0],
+-                display_height: tool.dimensions[1],
++                type: 'computer',
+             },
+             include: undefined,
+         };
+@@ -894,9 +892,8 @@ function getInputItems(input) {
+                 type: 'computer_call',
+                 call_id: item.callId,
+                 id: item.id,
+-                action: item.action,
++                actions: item.actions ?? (item.action ? [item.action] : []),
+                 status: item.status,
+-                pending_safety_checks: [],
+                 ...(0, providerData_1.camelOrSnakeToSnakeCase)(item.providerData),
+             };
+             return entry;
+@@ -1210,13 +1207,15 @@ function convertToOutputItem(items) {
+             return output;
+         }
+         else if (item.type === 'computer_call') {
+-            const { call_id, status, action, ...providerData } = item;
++            const { call_id, status, action, actions, ...providerData } = item;
++            const resolvedActions = actions ?? (action ? [action] : []);
+             const output = {
+                 type: 'computer_call',
+                 id: item.id,
+                 callId: call_id,
+                 status,
+-                action,
++                action: resolvedActions[0],
++                actions: resolvedActions,
+                 providerData,
+             };
+             return output;
+diff --git a/node_modules/@openai/agents-openai/dist/openaiResponsesModel.mjs b/node_modules/@openai/agents-openai/dist/openaiResponsesModel.mjs
+index 0c3150f..022d857 100644
+--- a/node_modules/@openai/agents-openai/dist/openaiResponsesModel.mjs
++++ b/node_modules/@openai/agents-openai/dist/openaiResponsesModel.mjs
+@@ -16,7 +16,8 @@ const HostedToolChoice = z.enum([
+     'image_generation',
+     'mcp',
+     // Specialized local tools
+-    'computer_use_preview',
++    'computer',
++    'computer',
+     'shell',
+     'apply_patch',
+ ]);
+@@ -530,10 +531,7 @@ function converTool(tool) {
+     else if (tool.type === 'computer') {
+         return {
+             tool: {
+-                type: 'computer_use_preview',
+-                environment: tool.environment,
+-                display_width: tool.dimensions[0],
+-                display_height: tool.dimensions[1],
++                type: 'computer',
+             },
+             include: undefined,
+         };
+@@ -884,9 +882,8 @@ function getInputItems(input) {
+                 type: 'computer_call',
+                 call_id: item.callId,
+                 id: item.id,
+-                action: item.action,
++                actions: item.actions ?? (item.action ? [item.action] : []),
+                 status: item.status,
+-                pending_safety_checks: [],
+                 ...camelOrSnakeToSnakeCase(item.providerData),
+             };
+             return entry;
+@@ -1200,13 +1197,15 @@ function convertToOutputItem(items) {
+             return output;
+         }
+         else if (item.type === 'computer_call') {
+-            const { call_id, status, action, ...providerData } = item;
++            const { call_id, status, action, actions, ...providerData } = item;
++            const resolvedActions = actions ?? (action ? [action] : []);
+             const output = {
+                 type: 'computer_call',
+                 id: item.id,
+                 callId: call_id,
+                 status,
+-                action,
++                action: resolvedActions[0],
++                actions: resolvedActions,
+                 providerData,
+             };
+             return output;

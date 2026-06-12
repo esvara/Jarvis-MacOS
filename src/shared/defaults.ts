@@ -1,0 +1,40 @@
+import type { SettingsData } from "./types";
+import {
+  DEFAULT_ASSISTANT_LANGUAGE,
+  APP_DISPLAY_NAME,
+  DEFAULT_AUTONOMY_MODE,
+  DEFAULT_BROWSER_CONTROL_MODE,
+  DEFAULT_CODEX_BRIDGE_MODE,
+  DEFAULT_ENABLE_OPENCLAW_BACKEND,
+  DEFAULT_VOICE,
+  DEFAULT_VOICE_INPUT_MODE
+} from "./samanthaConfig";
+
+export const defaultSettings: SettingsData = {
+  appName: APP_DISPLAY_NAME,
+  apiKey: "",
+  hasApiKey: false,
+  hotkey: "Alt+Space",
+  voice: DEFAULT_VOICE,
+  voiceInputMode: DEFAULT_VOICE_INPUT_MODE,
+  language: DEFAULT_ASSISTANT_LANGUAGE,
+  debugMode: false,
+  autonomyMode: DEFAULT_AUTONOMY_MODE,
+  browserControlMode: DEFAULT_BROWSER_CONTROL_MODE,
+  codexIntegration: {
+    enabled: true,
+    godMode: false,
+    mode: DEFAULT_CODEX_BRIDGE_MODE,
+    inboxPath: "~/Library/Application Support/Jarvis/codex/inbox.md",
+    outboxPath: "~/Library/Application Support/Jarvis/codex/outbox.md",
+    eventsPath: "~/Library/Application Support/Jarvis/codex/events.jsonl"
+  },
+  toolRegistry: {
+    enableWebSearch: true,
+    enableCodeInterpreter: true,
+    enableImageGeneration: true,
+    enableOpenClawBackend: DEFAULT_ENABLE_OPENCLAW_BACKEND,
+    vectorStoreIds: [],
+    mcpServers: []
+  }
+};

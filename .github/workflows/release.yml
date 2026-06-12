@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    runs-on: macos-15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          cache: npm
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Print toolchain versions
+        run: |
+          node -v
+          npm -v
+          swift --version
+          xcodebuild -version
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build sidecar
+        run: npm run build:sidecar
+
+      - name: Build voice runtime
+        run: npm run build:voice
+
+      - name: Build Swift target
+        run: swift build
+
+      - name: Run public repo checks
+        run: npm run check:public
+
+      - name: Build release archive
+        run: npm run build:release
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-native/*.zip
+            dist-native/*.sha256
+          generate_release_notes: true
