@@ -13,6 +13,8 @@ enum InputActionRequest: Equatable {
   case agentSendPrompt(String, app: String, authorization: String?)
   case appPaste(AppPasteBody, authorization: String?)
   case appClick(AppClickBody, authorization: String?)
+  case appRead(app: String, authorization: String?)
+  case appQuit(AppQuitBody, authorization: String?)
 }
 
 struct AgentPromptBody: Codable, Equatable {
@@ -29,6 +31,10 @@ struct AppPasteBody: Codable, Equatable {
 struct AppClickBody: Codable, Equatable {
   var app: String
   var label: String
+}
+
+struct AppQuitBody: Codable, Equatable {
+  var app: String
 }
 
 /// GUI agent apps Jarvis can drive (activate → paste prompt → send).

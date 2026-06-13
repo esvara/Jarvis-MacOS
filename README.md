@@ -22,7 +22,7 @@ Jarvis is a native macOS app you control with your voice. Instead of operating t
 3. It activates the agent app, opens a **new chat**, pastes the prompt into the chat box, verifies it landed through Accessibility, and presses Enter.
 4. An automatic monitor polls the agent every 30 seconds and tells you out loud when it finishes, gets blocked, or needs your approval.
 
-It can also open the files your agents produce (PDF, Word, PowerPoint, Markdown…) and click visible buttons by label when you ask.
+It can also open the files your agents produce (PDF, Word, PowerPoint, Markdown…), click visible buttons by label, open web pages or searches in your browser, read what any app's window says, and — with Screen Recording granted — look at a screenshot of your screen to answer "what's on screen?".
 
 ## Features
 
@@ -30,7 +30,8 @@ It can also open the files your agents produce (PDF, Word, PowerPoint, Markdown�
 - **GUI delegation with verification** — prompts are pasted into the agent's real chat box; delivery is verified through Accessibility, with honest status reporting when it can't be confirmed
 - **New chat per task** — delegations never interrupt a conversation the agent already has in flight
 - **Proactive monitoring** — Jarvis narrates completion, blockers, and approval requests without being asked
-- **Light desktop actions** — open files by name (Spotlight search, newest match), paste text into any app, click buttons by their visible label
+- **Light desktop actions** — open files by name (Spotlight search, newest match), paste text into any app, click buttons by their visible label, open URLs or web searches in the browser, quit apps gracefully, press safe shortcuts, and scroll
+- **Screen awareness** — read any app's visible text through Accessibility, or capture a screenshot that the Realtime model sees as an image in the conversation (`see_screen`); needs Screen Recording permission
 - **Durable memory** — local SQLite-backed memory store with policy gating and approval support
 - **All local** — a Swift app plus a Node sidecar bound to `127.0.0.1`, secured with a per-session bearer token
 

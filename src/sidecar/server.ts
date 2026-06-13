@@ -172,6 +172,53 @@ async function openFileForUser(
   }
 }
 
+/// Open a URL (or a web search) in the default browser or a named one.
+/// Only http/https URLs are allowed; anything else becomes a search query.
+async function openUrlForUser(
+  rawUrl?: string,
+  searchQuery?: string,
+  browser?: string
+): Promise<{ ok: boolean; url?: string; error?: string }> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+
+  let target: string | undefined;
+  const trimmedUrl = rawUrl?.trim();
+  if (trimmedUrl) {
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmedUrl)
+      ? trimmedUrl
+      : `https://${trimmedUrl}`;
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        target = parsed.toString();
+      }
+    } catch {
+      // fall through to search
+    }
+  }
+  if (!target) {
+    const query = (searchQuery ?? trimmedUrl)?.trim();
+    if (!query) {
+      return { ok: false, error: "Provide 'url' or 'searchQuery'." };
+    }
+    target = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+  }
+
+  const args = browser?.trim() ? ["-a", browser.trim(), target] : [target];
+  try {
+    await run("/usr/bin/open", args, { timeout: 15_000 });
+    return { ok: true, url: target };
+  } catch (error) {
+    return {
+      ok: false,
+      url: target,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.writeHead(statusCode, localResponseHeaders("application/json; charset=utf-8"));
   response.end(JSON.stringify(payload));
@@ -486,6 +533,95 @@ async function main() {
         await inputBridge.resumeActions();
         const result = await inputBridge.clickInApp(input.app, input.label);
         sendJson(response, result.ok ? 200 : 502, result);
+        return;
+      }
+
+      if (method === "POST" && pathname === "/app/read") {
+        const input = await readJson<{ app?: string }>(request);
+        if (!input.app) {
+          sendJson(response, 400, { error: "'app' is required." });
+          return;
+        }
+        const result = await inputBridge.readApp(input.app);
+        sendJson(response, result.ok ? 200 : 502, result);
+        return;
+      }
+
+      if (method === "POST" && pathname === "/app/quit") {
+        const input = await readJson<{ app?: string }>(request);
+        if (!input.app) {
+          sendJson(response, 400, { error: "'app' is required." });
+          return;
+        }
+        await inputBridge.resumeActions();
+        const result = await inputBridge.quitApp(input.app);
+        sendJson(response, result.ok ? 200 : 502, result);
+        return;
+      }
+
+      if (method === "POST" && pathname === "/web/open") {
+        const input = await readJson<{ url?: string; searchQuery?: string; browser?: string }>(request);
+        const result = await openUrlForUser(input.url, input.searchQuery, input.browser);
+        sendJson(response, result.ok ? 200 : 400, result);
+        return;
+      }
+
+      if (method === "POST" && pathname === "/screen/capture") {
+        try {
+          const data = await inputBridge.screenshot();
+          sendJson(response, 200, { ok: true, format: "jpeg", data });
+        } catch (error) {
+          sendJson(response, 502, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        return;
+      }
+
+      if (method === "POST" && pathname === "/input/keys") {
+        const input = await readJson<{ keys?: string[] }>(request);
+        if (!Array.isArray(input.keys) || input.keys.length === 0) {
+          sendJson(response, 400, { error: "'keys' must be a non-empty array." });
+          return;
+        }
+        try {
+          await inputBridge.resumeActions();
+          await inputBridge.keypress(input.keys);
+          sendJson(response, 200, { ok: true });
+        } catch (error) {
+          sendJson(response, 502, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        return;
+      }
+
+      if (method === "POST" && pathname === "/input/scroll") {
+        const input = await readJson<{ direction?: string; amount?: number }>(request);
+        const direction = input.direction;
+        if (direction !== "up" && direction !== "down" && direction !== "left" && direction !== "right") {
+          sendJson(response, 400, { error: "'direction' must be up, down, left or right." });
+          return;
+        }
+        // Scroll wheel units: the executor divides by 120 per line; ~3 lines
+        // per "notch" feels like one trackpad swipe.
+        const notches = Math.min(Math.max(Math.round(input.amount ?? 3), 1), 20);
+        const delta = notches * 120;
+        const scrollX = direction === "left" ? -delta : direction === "right" ? delta : 0;
+        const scrollY = direction === "up" ? -delta : direction === "down" ? delta : 0;
+        try {
+          await inputBridge.resumeActions();
+          const display = await inputBridge.getPrimaryDisplay();
+          await inputBridge.scroll(display.width / 2, display.height / 2, scrollX, scrollY);
+          sendJson(response, 200, { ok: true, direction, notches });
+        } catch (error) {
+          sendJson(response, 502, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
         return;
       }
 

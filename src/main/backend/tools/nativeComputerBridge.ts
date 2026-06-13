@@ -48,6 +48,8 @@ const INPUT_SERVER_AGENT_READ_URL = `${INPUT_SERVER_BASE_URL}/agent/read`;
 const INPUT_SERVER_AGENT_SEND_PROMPT_URL = `${INPUT_SERVER_BASE_URL}/agent/send-prompt`;
 const INPUT_SERVER_APP_PASTE_URL = `${INPUT_SERVER_BASE_URL}/app/paste`;
 const INPUT_SERVER_APP_CLICK_URL = `${INPUT_SERVER_BASE_URL}/app/click`;
+const INPUT_SERVER_APP_READ_URL = `${INPUT_SERVER_BASE_URL}/app/read`;
+const INPUT_SERVER_APP_QUIT_URL = `${INPUT_SERVER_BASE_URL}/app/quit`;
 
 function authHeaders(): HeadersInit {
   const token = process.env.JARVIS_AUTH_TOKEN;
@@ -304,6 +306,76 @@ export class NativeComputerBridge {
         capturedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error)
       };
+    }
+  }
+
+  async readApp(appName: string): Promise<{
+    ok: boolean;
+    running: boolean;
+    appName?: string;
+    text: string;
+    capturedAt: string;
+    error?: string;
+  }> {
+    try {
+      const res = await fetch(`${INPUT_SERVER_APP_READ_URL}?app=${encodeURIComponent(appName)}`, {
+        headers: authHeaders(),
+        signal: AbortSignal.timeout(10_000)
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        running?: boolean;
+        appName?: string;
+        text?: string;
+        capturedAt?: string;
+        error?: string;
+      };
+      return {
+        ok: res.ok && json.ok !== false,
+        running: json.running === true,
+        appName: json.appName,
+        text: typeof json.text === "string" ? json.text : "",
+        capturedAt: json.capturedAt ?? new Date().toISOString(),
+        error: json.error
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        running: false,
+        text: "",
+        capturedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  async quitApp(appName: string): Promise<{
+    ok: boolean;
+    appName?: string;
+    terminated?: boolean;
+    note?: string;
+    error?: string;
+  }> {
+    try {
+      const res = await fetch(INPUT_SERVER_APP_QUIT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ app: appName }),
+        signal: AbortSignal.timeout(15_000)
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        appName?: string;
+        terminated?: boolean;
+        note?: string;
+        error?: string;
+      };
+      if (!res.ok || json.ok === false) {
+        return { ok: false, error: json.error ?? `App quit bridge returned ${res.status}` };
+      }
+      return { ok: true, appName: json.appName, terminated: json.terminated, note: json.note };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 

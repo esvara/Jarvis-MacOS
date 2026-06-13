@@ -419,6 +419,120 @@ final class InputActionServer: @unchecked Sendable {
             body: self.responseJSON(ok: false, error: error.localizedDescription))
         }
       }
+    case .appRead(let appName, let authorization):
+      guard isAuthorized(authorization) else {
+        sendResponse(
+          connection: connection,
+          status: 401,
+          body: responseJSON(ok: false, error: "Unauthorized"))
+        return
+      }
+      Task { @MainActor [weak self] in
+        guard let self else {
+          connection.cancel()
+          return
+        }
+
+        let trimmedName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+          self.sendResponse(
+            connection: connection,
+            status: 400,
+            body: self.responseJSON(ok: false, error: "Query parameter 'app' is required."))
+          return
+        }
+
+        let snapshot = self.permissionCoordinator.refresh(force: true)
+        guard snapshot.accessibilityTrusted else {
+          self.sendResponse(
+            connection: connection,
+            status: 403,
+            body: self.responseJSON(ok: false, error: "Accessibility permission is required to read \(trimmedName)."))
+          return
+        }
+
+        guard let app = self.findRunningApp(named: trimmedName) else {
+          self.sendResponse(
+            connection: connection,
+            status: 200,
+            body: self.responseJSON(ok: false, error: "'\(trimmedName)' is not running", extra: [
+              "running": false,
+              "text": "",
+              "capturedAt": ISO8601DateFormatter().string(from: Date())
+            ]))
+          return
+        }
+
+        let text = self.readAccessibleText(fromPid: app.processIdentifier)
+        self.sendResponse(
+          connection: connection,
+          status: 200,
+          body: self.responseJSON(ok: true, extra: [
+            "running": true,
+            "appName": app.localizedName ?? trimmedName,
+            "text": text,
+            "capturedAt": ISO8601DateFormatter().string(from: Date())
+          ]))
+      }
+    case .appQuit(let body, let authorization):
+      guard isAuthorized(authorization) else {
+        sendResponse(
+          connection: connection,
+          status: 401,
+          body: responseJSON(ok: false, error: "Unauthorized"))
+        return
+      }
+      Task { @MainActor [weak self] in
+        guard let self else {
+          connection.cancel()
+          return
+        }
+
+        guard !self.actionsBlocked else {
+          self.sendResponse(
+            connection: connection,
+            status: 409,
+            body: self.responseJSON(ok: false, error: "Input actions are paused by Stop All."))
+          return
+        }
+
+        let trimmedName = body.app.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+          self.sendResponse(
+            connection: connection,
+            status: 400,
+            body: self.responseJSON(ok: false, error: "'app' is required."))
+          return
+        }
+
+        guard let app = self.findRunningApp(named: trimmedName) else {
+          self.sendResponse(
+            connection: connection,
+            status: 200,
+            body: self.responseJSON(ok: false, error: "'\(trimmedName)' is not running"))
+          return
+        }
+
+        let resolvedName = app.localizedName ?? trimmedName
+        // Graceful quit only (same as Cmd+Q): the app can show its own
+        // save/confirm dialogs. Never force-terminate from here.
+        app.terminate()
+        var waited = 0
+        while !app.isTerminated, waited < 5_000 {
+          try? await Task.sleep(for: .milliseconds(250))
+          waited += 250
+        }
+        self.sendResponse(
+          connection: connection,
+          status: 200,
+          body: self.responseJSON(ok: true, extra: [
+            "appName": resolvedName,
+            "terminated": app.isTerminated,
+            "note": app.isTerminated
+              ? "Quit cleanly."
+              : "Quit was requested but the app is still running — it may be showing an unsaved-changes dialog."
+          ]))
+      }
     case .appClick(let body, let authorization):
       guard isAuthorized(authorization) else {
         sendResponse(
@@ -912,13 +1026,30 @@ final class InputActionServer: @unchecked Sendable {
     return value.contains(needle)
   }
 
+  /// Find any running app whose localized name matches (exactly or contains)
+  /// the given name, case-insensitively — same matching as paste/click.
+  @MainActor
+  private func findRunningApp(named name: String) -> NSRunningApplication? {
+    NSWorkspace.shared.runningApplications.first { app in
+      guard let appName = app.localizedName else { return false }
+      return appName.compare(name, options: [.caseInsensitive]) == .orderedSame
+        || appName.localizedCaseInsensitiveContains(name)
+    }
+  }
+
   @MainActor
   private func readAgentAccessibleText(_ target: AgentAppTarget) throws -> String {
     guard let app = findAgentApplication(target) else {
       throw InputActionError.invalidField("\(target.displayName) is not running")
     }
+    return readAccessibleText(fromPid: app.processIdentifier)
+  }
 
-    let root = AXUIElementCreateApplication(app.processIdentifier)
+  @MainActor
+  private func readAccessibleText(fromPid pid: pid_t) -> String {
+    let root = AXUIElementCreateApplication(pid)
+    // Electron/Chromium apps keep their AX tree disabled until asked.
+    AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue)
     var values: [String] = []
     var visited = Set<ObjectIdentifier>()
     collectAccessibleText(from: root, depth: 0, values: &values, visited: &visited)

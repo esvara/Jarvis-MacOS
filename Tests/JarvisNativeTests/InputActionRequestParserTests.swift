@@ -32,6 +32,29 @@ final class InputActionRequestParserTests: XCTestCase {
     XCTAssertEqual(try InputActionRequestParser.parse(request), .ready(.agentRead(app: "codex", authorization: "Bearer local")))
   }
 
+  func testAppReadRequestParsesAppQuery() throws {
+    let request = Data("GET /app/read?app=Safari HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer local\r\n\r\n".utf8)
+
+    XCTAssertEqual(try InputActionRequestParser.parse(request), .ready(.appRead(app: "Safari", authorization: "Bearer local")))
+  }
+
+  func testAppQuitRequestParsesBody() throws {
+    let body = #"{"app":"Notes"}"#
+    let headers = [
+      "POST /app/quit HTTP/1.1",
+      "Host: localhost",
+      "Authorization: Bearer local",
+      "Content-Type: application/json",
+      "Content-Length: \(body.utf8.count)",
+      "",
+      ""
+    ].joined(separator: "\r\n")
+
+    XCTAssertEqual(
+      try InputActionRequestParser.parse(Data((headers + body).utf8)),
+      .ready(.appQuit(AppQuitBody(app: "Notes"), authorization: "Bearer local")))
+  }
+
   func testActionRequestStaysIncompleteUntilEntireBodyArrives() throws {
     let body = #"{"type":"click","x":10,"y":20,"button":"left"}"#
     let headers = [

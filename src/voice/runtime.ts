@@ -20,6 +20,18 @@ import {
   parseClickInAppToolInput,
   openFileToolParameters,
   parseOpenFileToolInput,
+  seeScreenToolParameters,
+  parseSeeScreenToolInput,
+  openUrlToolParameters,
+  parseOpenUrlToolInput,
+  quitAppToolParameters,
+  parseQuitAppToolInput,
+  readAppToolParameters,
+  parseReadAppToolInput,
+  pressKeysToolParameters,
+  parsePressKeysToolInput,
+  scrollToolParameters,
+  parseScrollToolInput,
   forgetMemoryToolParameters,
   parseCodexCommandToolInput,
   parseCodexStatusToolInput,
@@ -1058,6 +1070,144 @@ async function connect(initialMuted = false) {
       }
     });
 
+    const seeScreenTool = tool({
+      name: "see_screen",
+      description:
+        "Capture the screen and attach the screenshot to this conversation so you can SEE what is currently displayed. Use it when the user asks what is on screen, to read an error or content Accessibility can't reach, or to verify the result of an action. After it returns, describe or use what you see.",
+      parameters: seeScreenToolParameters,
+      execute: async (input) => {
+        parseSeeScreenToolInput(input);
+        setPhase("acting");
+        const result = await requestJson<{ ok: boolean; format?: string; data?: string; error?: string }>(
+          "/screen/capture",
+          { method: "POST", body: JSON.stringify({}) }
+        );
+        setPhase("thinking");
+        if (!result.ok || !result.data) {
+          return { ok: false, error: result.error ?? "Screenshot failed." };
+        }
+        if (!session) {
+          return { ok: false, error: "Voice session is not connected." };
+        }
+        const imageEvent = {
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_image",
+                image_url: `data:image/${result.format ?? "jpeg"};base64,${result.data}`
+              }
+            ]
+          }
+        } as unknown as RealtimeClientMessage;
+        session.transport.sendEvent(imageEvent);
+        return {
+          ok: true,
+          note: "Screenshot attached to the conversation as an image. Look at it and answer based on what it shows."
+        };
+      }
+    });
+
+    const openUrlTool = tool({
+      name: "open_url",
+      description:
+        "Open a web page or run a web search in the user's browser. Give 'url' for a specific site, or 'searchQuery' to search Google. Optional 'browser' names a specific browser app (e.g. 'Google Chrome', 'Safari'); default browser otherwise.",
+      parameters: openUrlToolParameters,
+      execute: async (input) => {
+        const normalizedInput = parseOpenUrlToolInput(input);
+        setPhase("acting");
+        const result = await requestJson<{ ok: boolean; url?: string; error?: string }>("/web/open", {
+          method: "POST",
+          body: JSON.stringify(normalizedInput)
+        });
+        setPhase("speaking");
+        return result;
+      }
+    });
+
+    const quitAppTool = tool({
+      name: "quit_app",
+      description:
+        "Quit a running macOS app gracefully (same as Cmd+Q) by name. ALWAYS confirm with the user before quitting an app that may have unsaved work or a task in progress. If the app stays open it is probably showing an unsaved-changes dialog — tell the user.",
+      parameters: quitAppToolParameters,
+      execute: async (input) => {
+        const normalizedInput = parseQuitAppToolInput(input);
+        setPhase("acting");
+        const result = await requestJson<{
+          ok: boolean;
+          appName?: string;
+          terminated?: boolean;
+          note?: string;
+          error?: string;
+        }>("/app/quit", {
+          method: "POST",
+          body: JSON.stringify(normalizedInput)
+        });
+        setPhase("speaking");
+        return result;
+      }
+    });
+
+    const readAppTool = tool({
+      name: "read_app",
+      description:
+        "Read the visible text of any running macOS app through Accessibility (window content, labels, messages). Cheaper and more precise than see_screen when the app exposes its text; fall back to see_screen when it returns little or nothing.",
+      parameters: readAppToolParameters,
+      execute: async (input) => {
+        const normalizedInput = parseReadAppToolInput(input);
+        setPhase("thinking");
+        const result = await requestJson<{
+          ok: boolean;
+          running: boolean;
+          appName?: string;
+          text: string;
+          capturedAt: string;
+          error?: string;
+        }>("/app/read", {
+          method: "POST",
+          body: JSON.stringify(normalizedInput)
+        });
+        setPhase("speaking");
+        return result;
+      }
+    });
+
+    const pressKeysTool = tool({
+      name: "press_keys",
+      description:
+        "Press a safe keyboard shortcut in the frontmost app: enter, escape, tab, space, delete, arrows, pageup/pagedown, home/end, or cmd combos (a/c/v/z/s/f/n/t/w/r). Use after focusing the right app. Never use it to bypass a confirmation the user has not given.",
+      parameters: pressKeysToolParameters,
+      execute: async (input) => {
+        const normalizedInput = parsePressKeysToolInput(input);
+        setPhase("acting");
+        const result = await requestJson<{ ok: boolean; error?: string }>("/input/keys", {
+          method: "POST",
+          body: JSON.stringify(normalizedInput)
+        });
+        setPhase("speaking");
+        return result;
+      }
+    });
+
+    const scrollTool = tool({
+      name: "scroll",
+      description:
+        "Scroll the screen at its center: direction up/down/left/right, amount 1-20 notches (3 ≈ one swipe). Combine with see_screen or read_app to review long content.",
+      parameters: scrollToolParameters,
+      execute: async (input) => {
+        const normalizedInput = parseScrollToolInput(input);
+        setPhase("acting");
+        const result = await requestJson<{ ok: boolean; error?: string }>("/input/scroll", {
+          method: "POST",
+          body: JSON.stringify(normalizedInput)
+        });
+        setPhase("speaking");
+        return result;
+      }
+    });
+
     const conversationAgent = new RealtimeAgent({
       name: "ConversationAgent",
       voice: currentSettings.voice,
@@ -1087,11 +1237,17 @@ SAFETY:
 - For sensitive or irreversible requests (credentials, payments, external sends or publishing, mass deletion, destructive or privileged commands), confirm with the user before delegating.
 - If the bridge returns needsUserApproval or blocked, explain plainly what is needed.
 
-LIGHT APP ACTIONS:
-- With paste_text_into_app you can open any macOS app by name and paste text into it (Notes, Word, PowerPoint, TextEdit, etc.). Use it when the user asks to put text somewhere, dictate a note, or drop content into a document. Use submit=true only for chat-style apps where Enter sends.
-- With open_file you can open and SHOW the user any file (PDF, Word, Markdown, images...). When an agent finishes and produced files, offer to open them; if the user says "ábrelo" / "muéstramelo", call open_file with a query taken from the file name the agent mentioned. Tell the user what you opened.
-- With click_in_app you can press a visible button, link, or menu item by its label in a running app — e.g. "Open in" on a Codex output card, "Abrir", "Download". Use the label the user said or the one visible in the agent's result. If it fails, say which label you tried.
-- That is your only direct computer action; anything more complex must be delegated to an agent app.
+LIGHT APP ACTIONS (basic desktop control — anything more complex must be delegated to an agent app):
+- paste_text_into_app: open any macOS app by name and paste text into it (Notes, Word, TextEdit...). Use submit=true only for chat-style apps where Enter sends.
+- open_file: open and SHOW the user any file (PDF, Word, Markdown, images...). When an agent finishes and produced files, offer to open them; if the user says "ábrelo" / "muéstramelo", call open_file with a query taken from the file name. Tell the user what you opened.
+- click_in_app: press a visible button, link, or menu item by its label in a running app — e.g. "Open in", "Abrir", "Download". If it fails, say which label you tried.
+- open_url: open a website or run a web search in the user's browser ("busca X en Chrome" → searchQuery=X, browser="Google Chrome").
+- quit_app: quit an app gracefully by name. Confirm with the user first when the app might have unsaved work or a running task; if it stays open, it is likely asking about unsaved changes — tell the user.
+- press_keys / scroll: safe keyboard shortcuts and scrolling in the frontmost app — use them for small adjustments (confirm a dialog the user asked for, scroll a page, close a tab with cmd,w). Never to bypass a confirmation.
+
+SEEING THE SCREEN:
+- read_app: read the visible text of any running app via Accessibility. Prefer it to answer "what does X say?" — it is fast and precise when the app exposes text.
+- see_screen: capture a screenshot that YOU can see in this conversation. Use it when the user asks what's on screen, when read_app returns little or nothing (canvas/image-heavy apps), or to verify the result of an action you just performed. After calling it, look at the attached image and answer from it. Never claim you saw something without having called see_screen or read_app.
 
 HONEST REPORTING:
 - A delegation only counts as delivered when the tool returns status "sent". If it returns "blocked" or an error, tell the user exactly what failed and what is needed — never say you sent it.
@@ -1099,7 +1255,22 @@ HONEST REPORTING:
 Use memory tools when the user shares stable preferences or defaults. Do not claim you personally clicked or typed — the agent apps do the work; you direct them and report back.
 `,
       handoffs: [],
-      tools: [searchMemoryTool, saveMemoryTool, forgetMemoryTool, delegateToAgentTool, getAgentStatusTool, pasteIntoAppTool, clickInAppTool, openFileTool]
+      tools: [
+        searchMemoryTool,
+        saveMemoryTool,
+        forgetMemoryTool,
+        delegateToAgentTool,
+        getAgentStatusTool,
+        pasteIntoAppTool,
+        clickInAppTool,
+        openFileTool,
+        seeScreenTool,
+        openUrlTool,
+        quitAppTool,
+        readAppTool,
+        pressKeysTool,
+        scrollTool
+      ]
     });
 
     const clientSecret = await requestJson<{ value: string }>("/realtime/client-secret", {

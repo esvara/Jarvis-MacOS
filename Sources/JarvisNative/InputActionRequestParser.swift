@@ -38,6 +38,8 @@ struct InputActionRequestParser {
       return .ready(.agentStatus(app: queryApp ?? "codex", authorization: headers["authorization"]))
     case ("GET", "/codex/read"), ("GET", "/agent/read"):
       return .ready(.agentRead(app: queryApp ?? "codex", authorization: headers["authorization"]))
+    case ("GET", "/app/read"):
+      return .ready(.appRead(app: queryApp ?? "", authorization: headers["authorization"]))
     case ("POST", "/emergency-stop"):
       return .ready(.emergencyStop(authorization: headers["authorization"]))
     case ("POST", "/resume-actions"):
@@ -63,6 +65,15 @@ struct InputActionRequestParser {
         throw InputActionRequestParserError.invalidJSON
       }
       return .ready(.appPaste(payload, authorization: headers["authorization"]))
+    case ("POST", "/app/quit"):
+      guard let body = try bodyData(from: data, separatorRange: separatorRange, headers: headers) else {
+        return .incomplete
+      }
+      let decoder = JSONDecoder()
+      guard let payload = try? decoder.decode(AppQuitBody.self, from: body) else {
+        throw InputActionRequestParserError.invalidJSON
+      }
+      return .ready(.appQuit(payload, authorization: headers["authorization"]))
     case ("POST", "/app/click"):
       guard let body = try bodyData(from: data, separatorRange: separatorRange, headers: headers) else {
         return .incomplete

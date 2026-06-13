@@ -275,6 +275,152 @@ export function parseOpenFileToolInput(input: unknown): {
   };
 }
 
+export const seeScreenToolParameters = strictObject({
+  reason: {
+    type: ["string", "null"]
+  }
+});
+
+const seeScreenToolInputSchema = z.object({
+  reason: nullableStringSchema
+});
+
+export function parseSeeScreenToolInput(input: unknown): { reason?: string } {
+  const parsed = seeScreenToolInputSchema.parse(input);
+  return { reason: parsed.reason ?? undefined };
+}
+
+export const openUrlToolParameters = strictObject({
+  url: {
+    type: ["string", "null"]
+  },
+  searchQuery: {
+    type: ["string", "null"]
+  },
+  browser: {
+    type: ["string", "null"]
+  }
+});
+
+const openUrlToolInputSchema = z.object({
+  url: nullableStringSchema,
+  searchQuery: nullableStringSchema,
+  browser: nullableStringSchema
+});
+
+export function parseOpenUrlToolInput(input: unknown): {
+  url?: string;
+  searchQuery?: string;
+  browser?: string;
+} {
+  const parsed = openUrlToolInputSchema.parse(input);
+  return {
+    url: parsed.url ?? undefined,
+    searchQuery: parsed.searchQuery ?? undefined,
+    browser: parsed.browser ?? undefined
+  };
+}
+
+export const quitAppToolParameters = strictObject({
+  appName: {
+    type: "string",
+    minLength: 2
+  }
+});
+
+const quitAppToolInputSchema = z.object({
+  appName: z.string().min(2)
+});
+
+export function parseQuitAppToolInput(input: unknown): { app: string } {
+  const parsed = quitAppToolInputSchema.parse(input);
+  return { app: parsed.appName };
+}
+
+export const readAppToolParameters = strictObject({
+  appName: {
+    type: "string",
+    minLength: 2
+  }
+});
+
+const readAppToolInputSchema = z.object({
+  appName: z.string().min(2)
+});
+
+export function parseReadAppToolInput(input: unknown): { app: string } {
+  const parsed = readAppToolInputSchema.parse(input);
+  return { app: parsed.appName };
+}
+
+/// Safe, reversible key presses only — no app-quitting or system-level combos.
+export const pressKeysCombos = [
+  "enter",
+  "escape",
+  "tab",
+  "space",
+  "delete",
+  "up",
+  "down",
+  "left",
+  "right",
+  "pageup",
+  "pagedown",
+  "home",
+  "end",
+  "cmd,a",
+  "cmd,c",
+  "cmd,v",
+  "cmd,z",
+  "cmd,s",
+  "cmd,f",
+  "cmd,n",
+  "cmd,t",
+  "cmd,w",
+  "cmd,r"
+] as const;
+
+export const pressKeysToolParameters = strictObject({
+  combo: {
+    type: "string",
+    enum: [...pressKeysCombos]
+  }
+});
+
+const pressKeysToolInputSchema = z.object({
+  combo: z.enum(pressKeysCombos)
+});
+
+export function parsePressKeysToolInput(input: unknown): { keys: string[] } {
+  const parsed = pressKeysToolInputSchema.parse(input);
+  return { keys: parsed.combo.split(",") };
+}
+
+export const scrollToolParameters = strictObject({
+  direction: {
+    type: "string",
+    enum: ["up", "down", "left", "right"]
+  },
+  amount: {
+    type: ["integer", "null"],
+    minimum: 1,
+    maximum: 20
+  }
+});
+
+const scrollToolInputSchema = z.object({
+  direction: z.enum(["up", "down", "left", "right"]),
+  amount: z.number().int().min(1).max(20).nullable()
+});
+
+export function parseScrollToolInput(input: unknown): {
+  direction: "up" | "down" | "left" | "right";
+  amount?: number;
+} {
+  const parsed = scrollToolInputSchema.parse(input);
+  return { direction: parsed.direction, amount: parsed.amount ?? undefined };
+}
+
 export const codexStatusToolParameters = strictObject({
   query: {
     type: ["string", "null"]
