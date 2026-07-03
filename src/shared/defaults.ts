@@ -7,13 +7,17 @@ import {
   DEFAULT_CODEX_BRIDGE_MODE,
   DEFAULT_ENABLE_OPENCLAW_BACKEND,
   DEFAULT_VOICE,
-  DEFAULT_VOICE_INPUT_MODE
+  DEFAULT_VOICE_INPUT_MODE,
+  DEFAULT_VOICE_PROVIDER
 } from "./samanthaConfig";
 
 export const defaultSettings: SettingsData = {
   appName: APP_DISPLAY_NAME,
   apiKey: "",
   hasApiKey: false,
+  voiceProvider: DEFAULT_VOICE_PROVIDER,
+  hasXaiApiKey: false,
+  hasGeminiApiKey: false,
   hotkey: "Alt+Space",
   voice: DEFAULT_VOICE,
   voiceInputMode: DEFAULT_VOICE_INPUT_MODE,

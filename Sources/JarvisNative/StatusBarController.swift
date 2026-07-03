@@ -333,6 +333,64 @@ private struct StatusBarSettingsView: View {
         }
       }
 
+      // Voice provider (OpenAI / Grok / Gemini)
+      SettingsCard {
+        VStack(alignment: .leading, spacing: 8) {
+          SettingsSectionHeader(title: "Voice Provider", icon: "antenna.radiowaves.left.and.right")
+
+          settingsMenuRow(
+            title: "Provider",
+            value: providerDisplayName(model.settings.voiceProvider ?? "openai"),
+            icon: "cloud"
+          ) {
+            ForEach(["openai", "grok", "gemini", "local"], id: \.self) { provider in
+              Button {
+                Task { await model.saveVoiceProvider(provider) }
+              } label: {
+                menuSelectionLabel(
+                  title: providerDisplayName(provider),
+                  selected: (model.settings.voiceProvider ?? "openai") == provider
+                )
+              }
+            }
+          }
+
+          if (model.settings.voiceProvider ?? "openai") == "grok" {
+            providerKeyField(
+              placeholder: "xai-...",
+              draft: $model.xaiKeyDraft,
+              configured: model.settings.hasXaiApiKey ?? false,
+              configuredText: "xAI key configured locally",
+              missingText: "No xAI API key configured (console.x.ai)"
+            ) {
+              Task { await model.saveXaiKey() }
+            }
+          }
+
+          if (model.settings.voiceProvider ?? "openai") == "gemini" {
+            providerKeyField(
+              placeholder: "AIza...",
+              draft: $model.geminiKeyDraft,
+              configured: model.settings.hasGeminiApiKey ?? false,
+              configuredText: "Gemini key configured locally",
+              missingText: "No Gemini API key configured (aistudio.google.com)"
+            ) {
+              Task { await model.saveGeminiKey() }
+            }
+          }
+
+          if (model.settings.voiceProvider ?? "openai") == "local" {
+            Text("Runs fully on-device: Apple speech recognition + Ollama + system voice. Requires Ollama running with qwen3:8b pulled. No API key, no cloud.")
+              .font(.system(size: 10))
+              .foregroundStyle(.secondary)
+          }
+
+          Text("Voice reconnects with the new provider the next time you start listening.")
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+        }
+      }
+
       // Voice Controls
       SettingsCard {
         VStack(alignment: .leading, spacing: 10) {
@@ -512,6 +570,57 @@ private struct StatusBarSettingsView: View {
 
   private func voiceName(for id: String) -> String {
     Self.realtimeVoices.first(where: { $0.id == id })?.name ?? id
+  }
+
+  private func providerDisplayName(_ provider: String) -> String {
+    switch provider {
+    case "grok": return "Grok (xAI)"
+    case "gemini": return "Gemini Live (Google)"
+    case "local": return "Local (Ollama)"
+    default: return "OpenAI Realtime"
+    }
+  }
+
+  @ViewBuilder
+  private func providerKeyField(
+    placeholder: String,
+    draft: Binding<String>,
+    configured: Bool,
+    configuredText: String,
+    missingText: String,
+    onSave: @escaping () -> Void
+  ) -> some View {
+    HStack(spacing: 6) {
+      SecureField(placeholder, text: draft)
+        .textFieldStyle(.plain)
+        .font(.system(size: 12, design: .monospaced))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+          RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.white.opacity(0.04))
+            .overlay(
+              RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+        )
+
+      Button(action: onSave) {
+        Text("Save")
+          .font(.system(size: 11, weight: .semibold))
+          .padding(.horizontal, 10)
+          .padding(.vertical, 6)
+          .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+              .fill(Color.white.opacity(0.1))
+          )
+      }
+      .buttonStyle(.plain)
+    }
+
+    Text(configured ? configuredText : missingText)
+      .font(.system(size: 10))
+      .foregroundStyle(configured ? .green.opacity(0.8) : .secondary)
   }
 
   private func voiceModeName(for id: String) -> String {

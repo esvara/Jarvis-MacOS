@@ -167,7 +167,7 @@ export type BackendTaskEvent =
       summary: string;
     };
 
-import type { AgentApp, AssistantLanguage, AutonomyMode, BrowserControlMode, CodexBridgeMode, VoiceInputMode } from "./samanthaConfig";
+import type { AgentApp, AssistantLanguage, AutonomyMode, BrowserControlMode, CodexBridgeMode, VoiceInputMode, VoiceProvider } from "./samanthaConfig";
 
 export interface MCPServerConfig {
   id: string;
@@ -200,6 +200,9 @@ export interface SettingsData {
   appName: string;
   apiKey: string;
   hasApiKey: boolean;
+  voiceProvider: VoiceProvider;
+  hasXaiApiKey: boolean;
+  hasGeminiApiKey: boolean;
   hotkey: string;
   voice: string;
   voiceInputMode: VoiceInputMode;
@@ -235,6 +238,9 @@ export interface MemoryAuditRecord {
 
 export interface SettingsUpdate {
   apiKey?: string;
+  voiceProvider?: VoiceProvider;
+  xaiApiKey?: string;
+  geminiApiKey?: string;
   hotkey?: string;
   voice?: string;
   voiceInputMode?: VoiceInputMode;

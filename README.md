@@ -32,7 +32,8 @@ It can also open the files your agents produce (PDF, Word, PowerPoint, Markdown�
 
 ## Features
 
-- **Voice-first** — realtime speech via OpenAI Realtime (deep natural male voice), Spanish by default, English supported
+- **Voice-first** — realtime speech with a deep natural male voice, Spanish by default, English supported
+- **Four voice providers** — OpenAI Realtime (`gpt-realtime-2`, default), **Grok** (xAI Voice Agent API, same protocol), **Gemini Live** (Google, cheapest cloud) and **Local (Ollama)** — fully on-device Apple STT + local LLM + system voice, zero cloud cost; switch from the settings popover
 - **GUI delegation with verification** — prompts are pasted into the agent's real chat box; delivery is verified through Accessibility, with honest status reporting when it can't be confirmed
 - **New chat per task** — delegations never interrupt a conversation the agent already has in flight
 - **Proactive monitoring** — Jarvis narrates completion, blockers, and approval requests without being asked
@@ -58,7 +59,9 @@ It can also open the files your agents produce (PDF, Word, PowerPoint, Markdown�
 | **Permissions** | Microphone, Accessibility, file access (Documents); Screen Recording optional |
 | **Agent apps** | Codex and/or Claude installed in `/Applications` |
 
-> **Note — API key only:** Jarvis is built on the OpenAI **Realtime API** (`gpt-realtime` models), which is only available through the OpenAI Platform with an API key and pay-per-use billing. A ChatGPT subscription (Plus/Pro/Business) or "Sign in with ChatGPT" OAuth **cannot** power the voice layer — OAuth tokens are scoped to Codex and do not work against the Realtime API. Your subscriptions still matter: the Codex and Claude apps that Jarvis delegates work to run on their own accounts; the API key only pays for Jarvis's voice.
+> **Note — API key only:** Jarvis's voice layer runs on realtime voice APIs that require a platform API key with pay-per-use billing — an OpenAI key for `gpt-realtime-2` (default), an xAI key for Grok voice, or a Google AI Studio key for Gemini Live. A ChatGPT subscription (Plus/Pro/Business) or "Sign in with ChatGPT" OAuth **cannot** power the voice layer — OAuth tokens are scoped to Codex and do not work against the Realtime API. Your subscriptions still matter: the Codex and Claude apps that Jarvis delegates work to run on their own accounts; the API key only pays for Jarvis's voice.
+>
+> Provider notes: screenshot vision (`see_screen`) is available on the **OpenAI** provider only. Gemini Live is in preview and its sessions are shorter; Jarvis reconnects transparently on the next push-to-talk.
 
 For building from source you also need:
 

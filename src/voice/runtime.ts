@@ -1,4 +1,4 @@
-import { tool } from "@openai/agents";
+import { tool, RunContext } from "@openai/agents";
 import {
   RealtimeAgent,
   RealtimeSession,
@@ -43,7 +43,17 @@ import {
   searchMemoryToolParameters,
   startBackendTaskToolParameters
 } from "../shared/toolSchemas";
-import { APP_DISPLAY_NAME, REALTIME_MODEL } from "../shared/samanthaConfig";
+import {
+  APP_DISPLAY_NAME,
+  DEFAULT_GEMINI_VOICE,
+  DEFAULT_GROK_VOICE,
+  GEMINI_LIVE_MODEL,
+  GROK_REALTIME_MODEL,
+  GROK_REALTIME_URL,
+  REALTIME_MODEL,
+  type VoiceProvider
+} from "../shared/samanthaConfig";
+import { GeminiLiveVoiceSession, type GeminiToolDef } from "./geminiLive";
 
 type RealtimeApprovalRequest = RealtimeSessionEventTypes["tool_approval_requested"][2];
 
@@ -143,7 +153,7 @@ const SIDECAR_BASE =
 
 const SAMPLE_RATE = 24000;
 
-let session: RealtimeSession | null = null;
+let session: RealtimeSession | GeminiLiveVoiceSession | null = null;
 let connectPromise: Promise<void> | null = null;
 let activeApproval: VoiceApprovalRequest["request"] | null = null;
 let phase: VoicePhase = "idle";
@@ -405,6 +415,37 @@ function emitTranscript(entries: TranscriptEntry[]) {
   postMessage("transcript", {
     entries
   });
+}
+
+// Gemini Live delivers transcription as incremental fragments instead of a
+// full history snapshot; accumulate them into the same TranscriptEntry shape.
+let providerTranscriptEntries: TranscriptEntry[] = [];
+const providerPartialEntries: { user?: TranscriptEntry; assistant?: TranscriptEntry } = {};
+
+function appendProviderTranscript(role: "user" | "assistant", fragment: string) {
+  let entry = providerPartialEntries[role];
+  if (!entry) {
+    entry = {
+      id: crypto.randomUUID(),
+      role,
+      text: "",
+      timestamp: new Date().toISOString()
+    };
+    providerPartialEntries[role] = entry;
+    providerTranscriptEntries.push(entry);
+  }
+  entry.text += fragment;
+  emitTranscript([...providerTranscriptEntries]);
+}
+
+function finalizeProviderTranscript(role: "user" | "assistant") {
+  providerPartialEntries[role] = undefined;
+}
+
+function resetProviderTranscript() {
+  providerTranscriptEntries = [];
+  providerPartialEntries.user = undefined;
+  providerPartialEntries.assistant = undefined;
 }
 
 function emitRealtimeApproval(approval: VoiceApprovalRequest | null) {
@@ -669,7 +710,8 @@ async function startAudioIO() {
   await playbackContext.resume().catch(() => undefined);
   playbackNextTime = 0;
 
-  if (session) {
+  // Gemini audio arrives through the adapter's callbacks instead.
+  if (session instanceof RealtimeSession) {
     session.transport.on("audio", (event: { data: ArrayBuffer }) => {
       const float32 = pcm16ToFloat32(event.data);
       playAudioChunk(float32);
@@ -882,8 +924,20 @@ async function connect(initialMuted = false) {
 
   connectPromise = (async () => {
     const currentSettings = await fetchSettings();
-    if (!currentSettings.hasApiKey) {
+    const provider: VoiceProvider = currentSettings.voiceProvider ?? "openai";
+    if (provider === "openai" && !currentSettings.hasApiKey) {
       throw new Error("OpenAI API key is not configured.");
+    }
+    if (provider === "grok" && !currentSettings.hasXaiApiKey) {
+      throw new Error("xAI (Grok) API key is not configured.");
+    }
+    if (provider === "gemini" && !currentSettings.hasGeminiApiKey) {
+      throw new Error("Gemini API key is not configured.");
+    }
+    if (provider === "local") {
+      // The Swift app runs the local pipeline natively and never connects
+      // this runtime; reaching here means the UI wiring is out of sync.
+      throw new Error("The local voice provider does not use the realtime runtime.");
     }
     const godModeEnabled = currentSettings.codexIntegration?.godMode === true;
     sessionLanguage = currentSettings.language === "en" ? "en" : "es";
@@ -1113,8 +1167,8 @@ async function connect(initialMuted = false) {
         if (!result.ok || !result.data) {
           return { ok: false, error: result.error ?? "Screenshot failed." };
         }
-        if (!session) {
-          return { ok: false, error: "Voice session is not connected." };
+        if (!(session instanceof RealtimeSession)) {
+          return { ok: false, error: "Screen vision is only available with the OpenAI voice provider." };
         }
         const imageEvent = {
           type: "conversation.item.create",
@@ -1230,11 +1284,17 @@ async function connect(initialMuted = false) {
       }
     });
 
-    const conversationAgent = new RealtimeAgent({
-      name: "ConversationAgent",
-      voice: currentSettings.voice,
-      handoffDescription: "Voice front door: conversation, memory, and delegation to agent apps.",
-      instructions: `
+    const providerVoice =
+      provider === "grok" ? DEFAULT_GROK_VOICE : provider === "gemini" ? DEFAULT_GEMINI_VOICE : currentSettings.voice;
+
+    const seeScreenDirective =
+      provider === "openai"
+        ? `
+- see_screen: capture a screenshot that YOU can see in this conversation. Use it when the user asks what's on screen, when read_app returns little or nothing (canvas/image-heavy apps), or to verify the result of an action you just performed. After calling it, look at the attached image and answer from it. Never claim you saw something without having called see_screen or read_app.`
+        : `
+- Never claim you saw something on screen without evidence from read_app.`;
+
+    const agentInstructions = `
 You are ${APP_DISPLAY_NAME}, a composed, precise, voice-first assistant in the spirit of J.A.R.V.I.S. from the Marvel films: unflappable, dryly witty when appropriate, always efficient and respectful. Keep answers brief and natural for speech.
 ${languageDirective(currentSettings.language)}
 
@@ -1268,75 +1328,148 @@ LIGHT APP ACTIONS (basic desktop control — anything more complex must be deleg
 - press_keys / scroll: safe keyboard shortcuts and scrolling in the frontmost app — use them for small adjustments (confirm a dialog the user asked for, scroll a page, close a tab with cmd,w). Never to bypass a confirmation.
 
 SEEING THE SCREEN:
-- read_app: read the visible text of any running app via Accessibility. Prefer it to answer "what does X say?" — it is fast and precise when the app exposes text.
-- see_screen: capture a screenshot that YOU can see in this conversation. Use it when the user asks what's on screen, when read_app returns little or nothing (canvas/image-heavy apps), or to verify the result of an action you just performed. After calling it, look at the attached image and answer from it. Never claim you saw something without having called see_screen or read_app.
+- read_app: read the visible text of any running app via Accessibility. Prefer it to answer "what does X say?" — it is fast and precise when the app exposes text.${seeScreenDirective}
 
 HONEST REPORTING:
 - A delegation only counts as delivered when the tool returns status "sent". If it returns "blocked" or an error, tell the user exactly what failed and what is needed — never say you sent it.
 
 Use memory tools when the user shares stable preferences or defaults. Do not claim you personally clicked or typed — the agent apps do the work; you direct them and report back.
-`,
-      handoffs: [],
-      tools: [
-        searchMemoryTool,
-        saveMemoryTool,
-        forgetMemoryTool,
-        delegateToAgentTool,
-        getAgentStatusTool,
-        pasteIntoAppTool,
-        clickInAppTool,
-        openFileTool,
-        seeScreenTool,
-        openUrlTool,
-        quitAppTool,
-        readAppTool,
-        pressKeysTool,
-        scrollTool
-      ]
-    });
+`;
+
+    const allTools = [
+      searchMemoryTool,
+      saveMemoryTool,
+      forgetMemoryTool,
+      delegateToAgentTool,
+      getAgentStatusTool,
+      pasteIntoAppTool,
+      clickInAppTool,
+      openFileTool,
+      seeScreenTool,
+      openUrlTool,
+      quitAppTool,
+      readAppTool,
+      pressKeysTool,
+      scrollTool
+    ];
+    // Only the OpenAI Realtime API accepts images in-session.
+    const agentTools = provider === "openai" ? allTools : allTools.filter((entry) => entry.name !== "see_screen");
 
     const clientSecret = await requestJson<{ value: string }>("/realtime/client-secret", {
       method: "POST",
-      body: JSON.stringify({} as SettingsPatch)
+      body: JSON.stringify({ provider })
     });
     if (!clientSecret.value) {
       throw new Error("Realtime client secret is missing.");
     }
 
-    const transport = new OpenAIRealtimeWebSocket({
-      useInsecureApiKey: true
-    });
+    if (provider === "gemini") {
+      // Reuse the exact same tool implementations through the SDK's public
+      // invoke() — no approval loop runs on this path, so approval-gated
+      // memory deletions execute directly (documented limitation).
+      const geminiTools: GeminiToolDef[] = agentTools.map((agentTool) => ({
+        name: agentTool.name,
+        description: agentTool.description,
+        parameters: agentTool.parameters as unknown as Record<string, unknown>,
+        execute: async (input: unknown) =>
+          await agentTool.invoke(new RunContext(undefined), JSON.stringify(input ?? {}))
+      }));
 
-    const nextSession = new RealtimeSession(conversationAgent, {
-      transport,
-      model: REALTIME_MODEL,
-      config: {
-        outputModalities: ["audio"],
-        audio: {
-          input: {
-            format: {
-              type: "audio/pcm",
-              rate: SAMPLE_RATE
-            }
+      resetProviderTranscript();
+      const nextSession = await GeminiLiveVoiceSession.connect({
+        token: clientSecret.value,
+        model: GEMINI_LIVE_MODEL,
+        voice: providerVoice,
+        instructions: agentInstructions,
+        tools: geminiTools,
+        callbacks: {
+          onAudioChunk: (pcm) => playAudioChunk(pcm16ToFloat32(pcm)),
+          onAudioStart: () => {
+            finalizeProviderTranscript("user");
+            outputLevelSmoothed = Math.max(outputLevelSmoothed, 0.36);
+            outputLevelUpdatedAt = performance.now();
+            setPhase("speaking");
           },
-          output: {
-            format: {
-              type: "audio/pcm",
-              rate: SAMPLE_RATE
-            },
-            voice: currentSettings.voice
+          onAudioStopped: () => {
+            finalizeProviderTranscript("assistant");
+            outputLevelSmoothed = 0;
+            setPhase(muted ? "idle" : "listening");
+          },
+          onInterrupted: () => {
+            setPhase("listening");
+            flushPlayback();
+          },
+          onToolStart: () => setPhase("thinking"),
+          onToolEnd: () => setPhase("listening"),
+          onUserTranscript: (text) => appendProviderTranscript("user", text),
+          onAssistantTranscript: (text) => appendProviderTranscript("assistant", text),
+          onError: (message) => postRuntimeError(message),
+          onClosed: (reason) => {
+            if (session) {
+              postRuntimeError(`Gemini Live session closed: ${reason}`);
+              void close();
+            }
           }
         }
-      }
-    });
+      });
 
-    attachSession(nextSession);
-    session = nextSession;
-    await startAudioIO();
-    await nextSession.connect({
-      apiKey: clientSecret.value,
-      model: REALTIME_MODEL
-    });
+      session = nextSession;
+      await startAudioIO();
+    } else {
+      const conversationAgent = new RealtimeAgent({
+        name: "ConversationAgent",
+        voice: providerVoice,
+        handoffDescription: "Voice front door: conversation, memory, and delegation to agent apps.",
+        instructions: agentInstructions,
+        handoffs: [],
+        tools: agentTools
+      });
+
+      const model = provider === "grok" ? GROK_REALTIME_MODEL : REALTIME_MODEL;
+      const transport =
+        provider === "grok"
+          ? new OpenAIRealtimeWebSocket({
+              url: GROK_REALTIME_URL,
+              // xAI authenticates browser WebSockets through this subprotocol
+              // instead of OpenAI's openai-insecure-api-key scheme.
+              createWebSocket: async ({ url, apiKey }) =>
+                new WebSocket(url, [`xai-client-secret.${apiKey}`]) as never
+            })
+          : new OpenAIRealtimeWebSocket({
+              useInsecureApiKey: true
+            });
+
+      const nextSession = new RealtimeSession(conversationAgent, {
+        transport,
+        model,
+        config: {
+          outputModalities: ["audio"],
+          audio: {
+            input: {
+              format: {
+                type: "audio/pcm",
+                rate: SAMPLE_RATE
+              }
+            },
+            output: {
+              format: {
+                type: "audio/pcm",
+                rate: SAMPLE_RATE
+              },
+              voice: providerVoice
+            }
+          }
+        }
+      });
+
+      attachSession(nextSession);
+      session = nextSession;
+      await startAudioIO();
+      await nextSession.connect({
+        apiKey: clientSecret.value,
+        model
+      });
+    }
 
     setConnected(true);
     setMuted(initialMuted);
@@ -1361,6 +1494,7 @@ async function close() {
   session?.close();
   session = null;
   timestampCache.clear();
+  resetProviderTranscript();
   activeApproval = null;
   speechDetectedSinceUnmute = false;
   emitRealtimeApproval(null);
@@ -1384,10 +1518,14 @@ function setSessionMuted(nextMuted: boolean): boolean {
     return muted;
   }
   if (shouldCommitTurn && session) {
-    const commitEvent: RealtimeClientMessage = {
-      type: "input_audio_buffer.commit"
-    };
-    session.transport.sendEvent(commitEvent);
+    if (session instanceof RealtimeSession) {
+      const commitEvent: RealtimeClientMessage = {
+        type: "input_audio_buffer.commit"
+      };
+      session.transport.sendEvent(commitEvent);
+    } else {
+      session.commitAudioTurn();
+    }
     setPhase("thinking");
   } else if (nextMuted && wasListening) {
     setPhase("idle");
@@ -1400,7 +1538,7 @@ function setSessionMuted(nextMuted: boolean): boolean {
 }
 
 async function approveApproval(alwaysApprove = false) {
-  if (!session || !activeApproval) {
+  if (!(session instanceof RealtimeSession) || !activeApproval) {
     return;
   }
 
@@ -1411,7 +1549,7 @@ async function approveApproval(alwaysApprove = false) {
 }
 
 async function rejectApproval(message?: string, alwaysReject = false) {
-  if (!session || !activeApproval) {
+  if (!(session instanceof RealtimeSession) || !activeApproval) {
     return;
   }
 

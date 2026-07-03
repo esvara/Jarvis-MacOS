@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- **Local voice provider (v3)**: a fourth provider, "Local (Ollama)", runs the whole voice loop on-device with zero cloud cost — Apple `SFSpeechRecognizer` for on-device speech-to-text (es/en), a local Ollama model (default `qwen3:8b`, override with `JARVIS_LOCAL_MODEL`) with function calling for the agent loop, and `AVSpeechSynthesizer` for the reply. Push-to-talk only. Tools: delegate to Codex/Claude, agent status, open URL. Requires Ollama running; a clear installation hint is spoken/shown otherwise. Adds the Speech Recognition permission.
+- **Multi-provider voice (v2)**: the voice layer now supports three providers, selectable from the settings popover — OpenAI Realtime (default), **Grok** via xAI's Voice Agent API (`wss://api.x.ai/v1/realtime`, same protocol, `rex` voice), and **Gemini Live** via `@google/genai` (`Charon` voice, ephemeral auth tokens, incremental transcription, function calling). Each provider stores its own API key under `secrets/` (mode 600) and mints short-lived client secrets through the sidecar. Screenshot vision (`see_screen`) remains OpenAI-only; all other tools — including delegation to Codex/Claude — work on every provider.
 - Request-size limits on both local servers (Swift input server and Node sidecar) — oversized bodies are rejected with a clear error instead of growing memory without bound.
 - SHA-256 checksum generated next to the release DMG.
 - CI, release, and license badges in the README; issue and pull-request templates.

@@ -59,6 +59,7 @@
     "postinstall": "npx patch-package"
   },
   "dependencies": {
+    "@google/genai": "^2.10.0",
     "@openai/agents": "^0.5.4",
     "better-sqlite3": "^12.6.2",
     "nanoid": "^5.1.6",

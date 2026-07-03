@@ -25,6 +25,32 @@ struct SidecarClient: Sendable {
     try await request(path: "/settings", method: "PUT", body: patch)
   }
 
+  struct LocalVoiceTurnResult: Codable {
+    var ok: Bool
+    var reply: String?
+    var error: String?
+  }
+
+  /// Local (Ollama) voice turn — the model may run several tool rounds, so
+  /// this call uses its own generous timeout instead of the default 8 s.
+  func localVoiceTurn(text: String, language: String) async throws -> LocalVoiceTurnResult {
+    struct TurnBody: Codable {
+      var text: String
+      var language: String
+    }
+    guard let url = URL(string: "/local-voice/turn", relativeTo: baseURL) else {
+      throw SidecarClientError.invalidResponse
+    }
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    applyAuth(to: &request)
+    request.timeoutInterval = 150
+    request.httpBody = try JSONEncoder().encode(TurnBody(text: text, language: language))
+    let (data, response) = try await URLSession.shared.data(for: request)
+    return try decodeResponse(data: data, response: response)
+  }
+
   func validateApiKey() async throws -> ApiKeyValidation {
     try await request(
       path: "/openai/validate-key",

@@ -33,6 +33,9 @@ struct SettingsData: Codable {
   var appName: String
   var apiKey: String
   var hasApiKey: Bool
+  var voiceProvider: String?
+  var hasXaiApiKey: Bool?
+  var hasGeminiApiKey: Bool?
   var hotkey: String
   var voice: String
   var voiceInputMode: String
@@ -47,6 +50,9 @@ struct SettingsData: Codable {
     appName: "Jarvis",
     apiKey: "",
     hasApiKey: false,
+    voiceProvider: "openai",
+    hasXaiApiKey: false,
+    hasGeminiApiKey: false,
     hotkey: "Option+Space",
     voice: "cedar",
     voiceInputMode: "push_to_talk",
@@ -75,6 +81,9 @@ struct SettingsData: Codable {
 
 struct SettingsPatch: Codable {
   var apiKey: String?
+  var voiceProvider: String?
+  var xaiApiKey: String?
+  var geminiApiKey: String?
   var hotkey: String?
   var voice: String?
   var voiceInputMode: String?

@@ -17,6 +17,13 @@ import type {
   SettingsUpdate
 } from "../shared/types";
 import { createRealtimeClientSecret, validateApiKey } from "./createRealtimeClientSecret";
+import {
+  createGeminiAuthToken,
+  createGrokClientSecret,
+  validateGeminiApiKey,
+  validateGrokApiKey
+} from "./createVoiceClientSecret";
+import { LocalVoiceAgent } from "./localVoiceAgent";
 import { CodexBridge } from "./codexBridge";
 import { logger } from "./logger";
 import { FileSettingsStore } from "./settings/fileSettingsStore";
@@ -310,6 +317,9 @@ async function main() {
   );
   const inputBridge = new NativeComputerBridge();
   const codexBridge = new CodexBridge(settingsStore, inputBridge);
+  const localVoiceAgent = new LocalVoiceAgent(codexBridge, (url, searchQuery) =>
+    openUrlForUser(url, searchQuery, undefined)
+  );
   const sseClients = new Set<ServerResponse>();
   const backendEventHistory: BackendTaskEvent[] = [];
 
@@ -443,7 +453,48 @@ async function main() {
         return;
       }
 
+      if (method === "POST" && pathname === "/voice/validate-key") {
+        const input = await readJson<{ provider?: string }>(request);
+        const provider = input.provider ?? settingsStore.get().voiceProvider;
+        if (provider === "grok") {
+          const key = settingsStore.getXaiApiKey();
+          sendJson(response, 200, key ? await validateGrokApiKey(key) : { valid: false, reason: "xAI API key is not configured." });
+          return;
+        }
+        if (provider === "gemini") {
+          const key = settingsStore.getGeminiApiKey();
+          sendJson(response, 200, key ? await validateGeminiApiKey(key) : { valid: false, reason: "Gemini API key is not configured." });
+          return;
+        }
+        const openaiKey = settingsStore.getApiKey();
+        sendJson(response, 200, openaiKey ? await validateApiKey(openaiKey) : { valid: false, reason: "OpenAI API key is not configured." });
+        return;
+      }
+
       if (method === "POST" && pathname === "/realtime/client-secret") {
+        const input = await readJson<{ provider?: string }>(request);
+        const provider = input.provider ?? settingsStore.get().voiceProvider;
+
+        if (provider === "grok") {
+          const xaiKey = settingsStore.getXaiApiKey();
+          if (!xaiKey) {
+            sendJson(response, 400, { error: "xAI API key is not configured." });
+            return;
+          }
+          sendJson(response, 200, await createGrokClientSecret(xaiKey));
+          return;
+        }
+
+        if (provider === "gemini") {
+          const geminiKey = settingsStore.getGeminiApiKey();
+          if (!geminiKey) {
+            sendJson(response, 400, { error: "Gemini API key is not configured." });
+            return;
+          }
+          sendJson(response, 200, await createGeminiAuthToken(geminiKey));
+          return;
+        }
+
         const apiKey = settingsStore.getApiKey();
         if (!apiKey) {
           sendJson(response, 400, {
@@ -515,6 +566,23 @@ async function main() {
           200
         );
         sendJson(response, 200, await codexBridge.recentEvents(limit));
+        return;
+      }
+
+      if (method === "POST" && pathname === "/local-voice/turn") {
+        const input = await readJson<{ text?: string; language?: string }>(request);
+        const text = input.text?.trim();
+        if (!text) {
+          sendJson(response, 400, { ok: false, error: "text must not be empty" });
+          return;
+        }
+        sendJson(response, 200, await localVoiceAgent.runTurn(text, input.language === "en" ? "en" : "es"));
+        return;
+      }
+
+      if (method === "POST" && pathname === "/local-voice/reset") {
+        localVoiceAgent.reset();
+        sendJson(response, 200, { ok: true });
         return;
       }
 

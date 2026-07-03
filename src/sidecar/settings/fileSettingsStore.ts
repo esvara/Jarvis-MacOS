@@ -7,12 +7,16 @@ import type { CodexIntegrationConfig, SettingsData, SettingsUpdate, ToolRegistry
 export class FileSettingsStore {
   private readonly settingsPath: string;
   private readonly secureEnvPath: string;
+  private readonly xaiEnvPath: string;
+  private readonly geminiEnvPath: string;
 
   constructor(private readonly rootDirectory = resolveApplicationSupportRoot()) {
     this.settingsPath = path.join(this.rootDirectory, "config", "settings.json");
     this.secureEnvPath =
       process.env.SAMANTHA_OPENAI_ENV_PATH ??
       path.join(this.rootDirectory, "secrets", "openai.env");
+    this.xaiEnvPath = path.join(this.rootDirectory, "secrets", "xai.env");
+    this.geminiEnvPath = path.join(this.rootDirectory, "secrets", "gemini.env");
     fs.mkdirSync(path.dirname(this.settingsPath), { recursive: true });
     if (!fs.existsSync(this.settingsPath)) {
       fs.writeFileSync(this.settingsPath, JSON.stringify(defaultSettings, null, 2));
@@ -42,6 +46,8 @@ export class FileSettingsStore {
       ...raw,
       apiKey: "",
       hasApiKey: Boolean(apiKey),
+      hasXaiApiKey: Boolean(this.getXaiApiKey()),
+      hasGeminiApiKey: Boolean(this.getGeminiApiKey()),
       browserControlMode: browserControlMode ?? defaultSettings.browserControlMode,
       codexIntegration: {
         ...defaultSettings.codexIntegration,
@@ -56,11 +62,19 @@ export class FileSettingsStore {
 
   update(update: SettingsUpdate): SettingsData {
     const current = this.get();
-    const { apiKey, ...settingsUpdate } = update;
+    const { apiKey, xaiApiKey, geminiApiKey, ...settingsUpdate } = update;
     const trimmedApiKey = apiKey?.trim();
     if (trimmedApiKey) {
       this.writeSecureApiKey(trimmedApiKey);
       process.env.OPENAI_API_KEY = trimmedApiKey;
+    }
+    const trimmedXaiKey = xaiApiKey?.trim();
+    if (trimmedXaiKey) {
+      this.writeSecureEnv(this.xaiEnvPath, "XAI_API_KEY", trimmedXaiKey);
+    }
+    const trimmedGeminiKey = geminiApiKey?.trim();
+    if (trimmedGeminiKey) {
+      this.writeSecureEnv(this.geminiEnvPath, "GEMINI_API_KEY", trimmedGeminiKey);
     }
 
     const mergedToolRegistry: ToolRegistryConfig = {
@@ -76,6 +90,8 @@ export class FileSettingsStore {
       ...settingsUpdate,
       apiKey: "",
       hasApiKey: Boolean(trimmedApiKey || this.readSecureApiKey() || process.env.OPENAI_API_KEY),
+      hasXaiApiKey: Boolean(this.getXaiApiKey()),
+      hasGeminiApiKey: Boolean(this.getGeminiApiKey()),
       codexIntegration: mergedCodexIntegration,
       toolRegistry: mergedToolRegistry
     };
@@ -88,6 +104,14 @@ export class FileSettingsStore {
     return this.readSecureApiKey() || process.env.OPENAI_API_KEY || "";
   }
 
+  getXaiApiKey(): string {
+    return this.readSecureEnv(this.xaiEnvPath, "XAI_API_KEY") || process.env.XAI_API_KEY || "";
+  }
+
+  getGeminiApiKey(): string {
+    return this.readSecureEnv(this.geminiEnvPath, "GEMINI_API_KEY") || process.env.GEMINI_API_KEY || "";
+  }
+
   private readFile(): Partial<SettingsData> {
     try {
       const raw = fs.readFileSync(this.settingsPath, "utf8");
@@ -98,19 +122,27 @@ export class FileSettingsStore {
   }
 
   private readSecureApiKey(): string {
+    return this.readSecureEnv(this.secureEnvPath, "OPENAI_API_KEY");
+  }
+
+  private writeSecureApiKey(apiKey: string): void {
+    this.writeSecureEnv(this.secureEnvPath, "OPENAI_API_KEY", apiKey);
+  }
+
+  private readSecureEnv(envPath: string, variable: string): string {
     try {
-      const raw = fs.readFileSync(this.secureEnvPath, "utf8");
-      const match = raw.match(/^OPENAI_API_KEY=(.*)$/m);
+      const raw = fs.readFileSync(envPath, "utf8");
+      const match = raw.match(new RegExp(`^${variable}=(.*)$`, "m"));
       return match?.[1]?.trim() ?? "";
     } catch {
       return "";
     }
   }
 
-  private writeSecureApiKey(apiKey: string): void {
-    fs.mkdirSync(path.dirname(this.secureEnvPath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(this.secureEnvPath, `OPENAI_API_KEY=${apiKey}\n`, { mode: 0o600 });
-    fs.chmodSync(this.secureEnvPath, 0o600);
+  private writeSecureEnv(envPath: string, variable: string, value: string): void {
+    fs.mkdirSync(path.dirname(envPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(envPath, `${variable}=${value}\n`, { mode: 0o600 });
+    fs.chmodSync(envPath, 0o600);
   }
 
   private scrubSettingsApiKey(): void {

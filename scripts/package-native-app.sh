@@ -118,6 +118,8 @@ cat > "$INFO_PLIST" <<PLIST
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Jarvis needs microphone access for realtime voice conversations.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Jarvis uses on-device speech recognition for the local voice provider.</string>
   <key>NSScreenCaptureUsageDescription</key>
   <string>Jarvis needs screen recording access to see your screen and help with desktop tasks.</string>
   <key>NSAccessibilityUsageDescription</key>

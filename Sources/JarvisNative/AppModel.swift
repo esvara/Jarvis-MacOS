@@ -18,6 +18,8 @@ final class AppModel: ObservableObject {
   @Published var health: HealthSnapshot = .offline
   @Published var settings: SettingsData = .empty
   @Published var apiKeyDraft = ""
+  @Published var xaiKeyDraft = ""
+  @Published var geminiKeyDraft = ""
   @Published var hotkeyDraft = ""
   @Published var commandDraft = ""
   @Published var memories: [MemoryRecord] = []
@@ -66,6 +68,7 @@ final class AppModel: ObservableObject {
   private var lastSpokenProgressAt = Date.distantPast
   private let progressSpeaker = AVSpeechSynthesizer()
   private weak var voiceController: VoiceRuntimeControlling?
+  private var localVoiceController: LocalVoiceController?
   private let nativeLogURL: URL = {
     let base = AppIdentity.logsDirectory()
     return base.appending(path: "native-overlay.log")
@@ -83,6 +86,30 @@ final class AppModel: ObservableObject {
 
   func attachVoiceController(_ controller: VoiceRuntimeControlling) {
     voiceController = controller
+  }
+
+  private var isLocalProvider: Bool {
+    settings.voiceProvider == "local"
+  }
+
+  private var localVoice: LocalVoiceController {
+    if let existing = localVoiceController {
+      return existing
+    }
+    let controller = LocalVoiceController(client: client)
+    controller.onPhaseChange = { [weak self] phase in
+      guard let self else { return }
+      self.voiceState.phase = phase
+      self.syncPhase()
+    }
+    controller.onError = { [weak self] message in
+      guard let self else { return }
+      self.errorMessage = message
+      self.voiceState.phase = "idle"
+      self.syncPhase()
+    }
+    localVoiceController = controller
+    return controller
   }
 
   func shutdown() {
@@ -204,6 +231,45 @@ final class AppModel: ObservableObject {
 
       syncPhase()
       await validateApiKey()
+    } catch {
+      errorMessage = error.localizedDescription
+      syncPhase()
+    }
+  }
+
+  func saveVoiceProvider(_ provider: String) async {
+    do {
+      settings = try await client.updateSettings(SettingsPatch(voiceProvider: provider))
+      errorMessage = ""
+      syncPhase()
+    } catch {
+      errorMessage = error.localizedDescription
+      syncPhase()
+    }
+  }
+
+  func saveXaiKey() async {
+    let trimmed = xaiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    do {
+      settings = try await client.updateSettings(SettingsPatch(xaiApiKey: trimmed))
+      xaiKeyDraft = ""
+      errorMessage = ""
+      syncPhase()
+    } catch {
+      errorMessage = error.localizedDescription
+      syncPhase()
+    }
+  }
+
+  func saveGeminiKey() async {
+    let trimmed = geminiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    do {
+      settings = try await client.updateSettings(SettingsPatch(geminiApiKey: trimmed))
+      geminiKeyDraft = ""
+      errorMessage = ""
+      syncPhase()
     } catch {
       errorMessage = error.localizedDescription
       syncPhase()
@@ -580,6 +646,15 @@ final class AppModel: ObservableObject {
   // MARK: - Listening Mode
 
   func startListening() async {
+    if isLocalProvider {
+      listeningModeActive = true
+      overlayVisible = true
+      errorMessage = ""
+      voiceRuntimeErrorMessage = ""
+      localVoice.configure(language: assistantLanguage)
+      await localVoice.startListening()
+      return
+    }
     let wasSpeaking = voiceState.phase == "speaking" || phase == "speaking"
     listeningModeActive = true
     overlayVisible = true
@@ -599,6 +674,11 @@ final class AppModel: ObservableObject {
   }
 
   func stopListening() async {
+    if isLocalProvider {
+      listeningModeActive = false
+      await localVoice.stopListeningAndRespond()
+      return
+    }
     listeningModeActive = false
     syncPhase()
     await setVoiceMuted(true)
