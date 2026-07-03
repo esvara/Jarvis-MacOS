@@ -48,3 +48,14 @@ If your change touches permissions, hotkeys, focus behavior, or computer control
 - Explain the user-visible change and the architecture impact.
 - Call out any macOS-specific manual verification you performed.
 - Note any permissions or signing assumptions required to reproduce the behavior.
+
+## Releases (maintainers)
+
+1. Update the version in `package.json` (SemVer: breaking → major, feature → minor, fix → patch) and move the `Unreleased` entries in `CHANGELOG.md` under the new version.
+2. Commit, then tag and push:
+
+   ```bash
+   git tag v<version> && git push origin main v<version>
+   ```
+
+3. The `Release` GitHub Actions workflow builds, validates, and publishes the DMG (plus its `.sha256`) to GitHub Releases automatically. The tag version should match `package.json` — the DMG filename is derived from it.

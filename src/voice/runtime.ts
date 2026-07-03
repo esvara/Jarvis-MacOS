@@ -555,11 +555,18 @@ function narrateMonitorUpdate(text: string): boolean {
   if (phase === "speaking" || phase === "thinking" || phase === "acting" || phase === "approvals") {
     return false;
   }
-  session.sendMessage(
-    sessionLanguage === "en"
-      ? `[Automatic agent monitor — not the user] ${text} Tell the user in one short, natural sentence.`
-      : `[Monitor automático de agentes — no es el usuario] ${text} Informa al usuario en una sola frase breve y natural.`
-  );
+  try {
+    session.sendMessage(
+      sessionLanguage === "en"
+        ? `[Automatic agent monitor — not the user] ${text} Tell the user in one short, natural sentence.`
+        : `[Monitor automático de agentes — no es el usuario] ${text} Informa al usuario en una sola frase breve y natural.`
+    );
+  } catch (error) {
+    // Session may be closing mid-poll; report not-delivered so the caller
+    // keeps the monitor alive and retries on the next poll.
+    console.warn("agent monitor: narration failed", error instanceof Error ? error.message : error);
+    return false;
+  }
   return true;
 }
 
@@ -605,8 +612,12 @@ function startAgentMonitor(agent: "codex" | "claude") {
           signal: AbortSignal.timeout(15_000)
         });
         monitorConsecutiveFailures = 0;
-      } catch {
+      } catch (error) {
         monitorConsecutiveFailures += 1;
+        console.warn(
+          `agent monitor: poll ${monitorConsecutiveFailures}/${MONITOR_MAX_FAILURES} failed for ${monitorAgent}`,
+          error instanceof Error ? error.message : error
+        );
         if (monitorConsecutiveFailures >= MONITOR_MAX_FAILURES) {
           const name = agentDisplayName(monitorAgent);
           narrateMonitorUpdate(
@@ -944,6 +955,17 @@ async function connect(initialMuted = false) {
       }
     });
 
+    // A tool that throws (sidecar down, timeout) must not leave the phase
+    // stuck in acting/thinking — the model answers right after either way.
+    const withToolPhase = async <T,>(toolPhase: VoicePhase, run: () => Promise<T>): Promise<T> => {
+      setPhase(toolPhase);
+      try {
+        return await run();
+      } finally {
+        setPhase("speaking");
+      }
+    };
+
     const startBackendTaskTool = tool({
       name: "start_backend_task",
       description:
@@ -952,33 +974,36 @@ async function connect(initialMuted = false) {
       execute: async (input) => {
         const { request, activeAppHint } = parseStartBackendTaskToolInput(input);
         setPhase("acting");
-        const recentMemories = await requestJson<MemoryRecord[]>("/memory/recent?limit=6");
         const taskId = crypto.randomUUID();
-        postMessage("taskState", {
-          taskId
-        });
-        const result = await requestJson<BackendTaskResult>("/backend/tasks/run", {
-          method: "POST",
-          body: JSON.stringify({
-            requestId: taskId,
-            userRequest: request,
-            transcriptHistory,
-            activeAppHint,
-            memoryContext: recentMemories
-              .slice(0, 6)
-              .map((memory) => `[${memory.kind}] ${memory.subject}: ${memory.content}`)
-              .join("\n")
-          })
-        });
-        postMessage("taskState", {
-          taskId: null
-        });
-        setPhase("speaking");
-        return {
-          taskId: result.taskId,
-          summary: result.summary,
-          agent: result.agent
-        };
+        try {
+          const recentMemories = await requestJson<MemoryRecord[]>("/memory/recent?limit=6");
+          postMessage("taskState", {
+            taskId
+          });
+          const result = await requestJson<BackendTaskResult>("/backend/tasks/run", {
+            method: "POST",
+            body: JSON.stringify({
+              requestId: taskId,
+              userRequest: request,
+              transcriptHistory,
+              activeAppHint,
+              memoryContext: recentMemories
+                .slice(0, 6)
+                .map((memory) => `[${memory.kind}] ${memory.subject}: ${memory.content}`)
+                .join("\n")
+            })
+          });
+          return {
+            taskId: result.taskId,
+            summary: result.summary,
+            agent: result.agent
+          };
+        } finally {
+          postMessage("taskState", {
+            taskId: null
+          });
+          setPhase("speaking");
+        }
       }
     });
 
@@ -989,12 +1014,12 @@ async function connect(initialMuted = false) {
       parameters: codexCommandToolParameters,
       execute: async (input) => {
         const normalizedInput = parseCodexCommandToolInput(input);
-        setPhase("acting");
-        const result = await requestJson<CodexCommandResult>("/codex/command", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
+        const result = await withToolPhase("acting", () =>
+          requestJson<CodexCommandResult>("/codex/command", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
         if (result.status === "sent") {
           startAgentMonitor(normalizedInput.agent ?? "codex");
         }
@@ -1009,13 +1034,12 @@ async function connect(initialMuted = false) {
       parameters: codexStatusToolParameters,
       execute: async (input) => {
         const normalizedInput = parseCodexStatusToolInput(input);
-        setPhase("thinking");
-        const result = await requestJson<CodexPmStatus>("/codex/pm-status", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("thinking", () =>
+          requestJson<CodexPmStatus>("/codex/pm-status", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1026,13 +1050,12 @@ async function connect(initialMuted = false) {
       parameters: pasteIntoAppToolParameters,
       execute: async (input) => {
         const normalizedInput = parsePasteIntoAppToolInput(input);
-        setPhase("acting");
-        const result = await requestJson<{ ok: boolean; verified?: boolean; error?: string }>("/app/paste", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("acting", () =>
+          requestJson<{ ok: boolean; verified?: boolean; error?: string }>("/app/paste", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1043,13 +1066,12 @@ async function connect(initialMuted = false) {
       parameters: clickInAppToolParameters,
       execute: async (input) => {
         const normalizedInput = parseClickInAppToolInput(input);
-        setPhase("acting");
-        const result = await requestJson<{ ok: boolean; clicked?: string; error?: string }>("/app/click", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("acting", () =>
+          requestJson<{ ok: boolean; clicked?: string; error?: string }>("/app/click", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1060,13 +1082,12 @@ async function connect(initialMuted = false) {
       parameters: openFileToolParameters,
       execute: async (input) => {
         const normalizedInput = parseOpenFileToolInput(input);
-        setPhase("acting");
-        const result = await requestJson<{ ok: boolean; path?: string; error?: string }>("/files/open", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("acting", () =>
+          requestJson<{ ok: boolean; path?: string; error?: string }>("/files/open", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1078,11 +1099,17 @@ async function connect(initialMuted = false) {
       execute: async (input) => {
         parseSeeScreenToolInput(input);
         setPhase("acting");
-        const result = await requestJson<{ ok: boolean; format?: string; data?: string; error?: string }>(
-          "/screen/capture",
-          { method: "POST", body: JSON.stringify({}) }
-        );
-        setPhase("thinking");
+        let result: { ok: boolean; format?: string; data?: string; error?: string };
+        try {
+          result = await requestJson<{ ok: boolean; format?: string; data?: string; error?: string }>(
+            "/screen/capture",
+            { method: "POST", body: JSON.stringify({}) }
+          );
+        } finally {
+          // The model inspects the attached image next, so thinking (not
+          // speaking) is the right phase after the capture round-trip.
+          setPhase("thinking");
+        }
         if (!result.ok || !result.data) {
           return { ok: false, error: result.error ?? "Screenshot failed." };
         }
@@ -1117,13 +1144,12 @@ async function connect(initialMuted = false) {
       parameters: openUrlToolParameters,
       execute: async (input) => {
         const normalizedInput = parseOpenUrlToolInput(input);
-        setPhase("acting");
-        const result = await requestJson<{ ok: boolean; url?: string; error?: string }>("/web/open", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("acting", () =>
+          requestJson<{ ok: boolean; url?: string; error?: string }>("/web/open", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1134,19 +1160,18 @@ async function connect(initialMuted = false) {
       parameters: quitAppToolParameters,
       execute: async (input) => {
         const normalizedInput = parseQuitAppToolInput(input);
-        setPhase("acting");
-        const result = await requestJson<{
-          ok: boolean;
-          appName?: string;
-          terminated?: boolean;
-          note?: string;
-          error?: string;
-        }>("/app/quit", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("acting", () =>
+          requestJson<{
+            ok: boolean;
+            appName?: string;
+            terminated?: boolean;
+            note?: string;
+            error?: string;
+          }>("/app/quit", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1157,20 +1182,19 @@ async function connect(initialMuted = false) {
       parameters: readAppToolParameters,
       execute: async (input) => {
         const normalizedInput = parseReadAppToolInput(input);
-        setPhase("thinking");
-        const result = await requestJson<{
-          ok: boolean;
-          running: boolean;
-          appName?: string;
-          text: string;
-          capturedAt: string;
-          error?: string;
-        }>("/app/read", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("thinking", () =>
+          requestJson<{
+            ok: boolean;
+            running: boolean;
+            appName?: string;
+            text: string;
+            capturedAt: string;
+            error?: string;
+          }>("/app/read", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1181,13 +1205,12 @@ async function connect(initialMuted = false) {
       parameters: pressKeysToolParameters,
       execute: async (input) => {
         const normalizedInput = parsePressKeysToolInput(input);
-        setPhase("acting");
-        const result = await requestJson<{ ok: boolean; error?: string }>("/input/keys", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("acting", () =>
+          requestJson<{ ok: boolean; error?: string }>("/input/keys", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1198,13 +1221,12 @@ async function connect(initialMuted = false) {
       parameters: scrollToolParameters,
       execute: async (input) => {
         const normalizedInput = parseScrollToolInput(input);
-        setPhase("acting");
-        const result = await requestJson<{ ok: boolean; error?: string }>("/input/scroll", {
-          method: "POST",
-          body: JSON.stringify(normalizedInput)
-        });
-        setPhase("speaking");
-        return result;
+        return withToolPhase("acting", () =>
+          requestJson<{ ok: boolean; error?: string }>("/input/scroll", {
+            method: "POST",
+            body: JSON.stringify(normalizedInput)
+          })
+        );
       }
     });
 
@@ -1338,6 +1360,7 @@ async function close() {
   await stopAudioIO();
   session?.close();
   session = null;
+  timestampCache.clear();
   activeApproval = null;
   speechDetectedSinceUnmute = false;
   emitRealtimeApproval(null);

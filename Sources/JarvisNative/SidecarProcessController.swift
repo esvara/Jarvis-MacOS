@@ -82,9 +82,19 @@ final class SidecarProcessController {
   }
 
   /// Terminate the sidecar this app instance spawned (no-op otherwise).
+  /// Waits briefly and escalates to SIGKILL — a Node process stuck in a
+  /// blocking call would otherwise survive as an orphan holding the port.
+  /// Runs at app quit on the main thread: the wait is event-driven (no
+  /// polling) and returns as soon as the process exits, typically <200 ms.
   func terminate() {
-    process?.terminate()
-    process = nil
+    guard let process else { return }
+    self.process = nil
+    let exited = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in exited.signal() }
+    process.terminate()
+    if exited.wait(timeout: .now() + 2) == .timedOut, process.isRunning {
+      kill(process.processIdentifier, SIGKILL)
+    }
   }
 
   private func resolvedRuntimeRoot() -> URL {

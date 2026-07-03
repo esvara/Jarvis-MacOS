@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="${1:-$(pwd)}"
-APP_DIR="$ROOT_DIR/dist-native/Samantha.app"
+APP_DIR="$ROOT_DIR/dist-native/Jarvis.app"
 APP_VERSION="${APP_VERSION:-$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version" "$ROOT_DIR/package.json")}"
 APP_ARCHITECTURE="${APP_ARCHITECTURE:-$(uname -m)}"
 DMG_NAME="Jarvis-${APP_VERSION}-macos-${APP_ARCHITECTURE}.dmg"
@@ -39,5 +39,7 @@ cat > "$SPEC_FILE" <<JSON
 JSON
 
 npx appdmg "$SPEC_FILE" "$DMG_PATH"
+
+shasum -a 256 "$DMG_PATH" > "$DMG_PATH.sha256"
 
 echo "$DMG_PATH"

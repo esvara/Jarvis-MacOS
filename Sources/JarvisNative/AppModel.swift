@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 
 private enum VoiceConnectionError: Error {
@@ -63,7 +64,7 @@ final class AppModel: ObservableObject {
   private var terminalTaskIds = Set<String>()
   private var lastSpokenProgress = ""
   private var lastSpokenProgressAt = Date.distantPast
-  private let progressSpeaker = NSSpeechSynthesizer()
+  private let progressSpeaker = AVSpeechSynthesizer()
   private weak var voiceController: VoiceRuntimeControlling?
   private let nativeLogURL: URL = {
     let base = AppIdentity.logsDirectory()
@@ -1224,9 +1225,13 @@ final class AppModel: ObservableObject {
     lastSpokenProgress = announcement
     lastSpokenProgressAt = now
     if progressSpeaker.isSpeaking {
-      progressSpeaker.stopSpeaking()
+      progressSpeaker.stopSpeaking(at: .immediate)
     }
-    progressSpeaker.startSpeaking(announcement)
+    let utterance = AVSpeechUtterance(string: announcement)
+    // Announcements are built in the assistant language; pick a matching
+    // voice so Spanish text is not read with English phonetics.
+    utterance.voice = AVSpeechSynthesisVoice(language: english ? "en-US" : "es-ES")
+    progressSpeaker.speak(utterance)
   }
 
   private func prependSyntheticEvent(type: String, taskId: String, summary: String) {

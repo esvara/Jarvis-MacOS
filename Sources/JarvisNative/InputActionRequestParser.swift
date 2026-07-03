@@ -1,6 +1,12 @@
 import Foundation
 
 struct InputActionRequestParser {
+  /// Largest accepted request body. Requests only carry JSON (prompts, click
+  /// targets); anything bigger is a bug or an attempt to exhaust memory.
+  /// Keep in sync with MAX_REQUEST_BODY_BYTES in src/sidecar/server.ts —
+  /// both loopback servers share the cap.
+  static let maxBodyBytes = 2_000_000
+
   static func parse(_ data: Data) throws -> InputActionRequestParseResult {
     guard let separatorRange = data.range(of: Data("\r\n\r\n".utf8)) else {
       return .incomplete
@@ -109,6 +115,9 @@ struct InputActionRequestParser {
     }
     guard let contentLength = Int(contentLengthValue), contentLength >= 0 else {
       throw InputActionRequestParserError.invalidContentLength
+    }
+    guard contentLength <= maxBodyBytes else {
+      throw InputActionRequestParserError.payloadTooLarge
     }
 
     let bodyStart = separatorRange.upperBound

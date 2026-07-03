@@ -22,6 +22,17 @@ type MemoryRow = {
   updated_at: string;
 };
 
+// A corrupted tags cell must not make every search/list over the table throw.
+function parseTags(raw: string, rowId: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((tag): tag is string => typeof tag === "string") : [];
+  } catch {
+    console.warn(`memoryStore: ignoring corrupted tags for memory ${rowId}`);
+    return [];
+  }
+}
+
 function rowToRecord(row: MemoryRow): MemoryRecord {
   return {
     id: row.id,
@@ -30,7 +41,7 @@ function rowToRecord(row: MemoryRow): MemoryRecord {
     content: row.content,
     confidence: row.confidence,
     source: row.source,
-    tags: JSON.parse(row.tags) as string[],
+    tags: parseTags(row.tags, row.id),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

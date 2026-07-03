@@ -90,10 +90,32 @@ function isPublicRoute(method: string, pathname: string): boolean {
   return method === "GET" && (pathname === "/health" || pathname === "/voice-runtime.js");
 }
 
+// Requests only carry JSON (prompts, tool args); anything bigger is a bug or
+// an attempt to exhaust memory. Keep in sync with the Swift input server's
+// InputActionRequestParser.maxBodyBytes — both loopback servers share the cap.
+const MAX_REQUEST_BODY_BYTES = 2_000_000;
+
+class PayloadTooLargeError extends Error {
+  constructor() {
+    super("Request body exceeds the maximum allowed size");
+  }
+}
+
 async function readJson<T>(request: IncomingMessage): Promise<T> {
+  const declaredLength = Number(request.headers["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
+    throw new PayloadTooLargeError();
+  }
   const chunks: Buffer[] = [];
+  let received = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    received += buffer.length;
+    if (received > MAX_REQUEST_BODY_BYTES) {
+      request.destroy();
+      throw new PayloadTooLargeError();
+    }
+    chunks.push(buffer);
   }
   if (!chunks.length) {
     return {} as T;
@@ -129,11 +151,13 @@ async function openFileForUser(
     if (!trimmedQuery) {
       return { ok: false, error: "Provide 'path' or 'query'." };
     }
+    // Quotes/backslashes would otherwise alter the Spotlight predicate syntax.
+    const escapedQuery = trimmedQuery.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     let candidates: string[] = [];
     try {
       const { stdout } = await run(
         "/usr/bin/mdfind",
-        ["-onlyin", process.env.HOME ?? "/", `kMDItemFSName == "*${trimmedQuery}*"cd`],
+        ["-onlyin", process.env.HOME ?? "/", `kMDItemFSName == "*${escapedQuery}*"cd`],
         { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }
       );
       candidates = stdout.split("\n").filter(Boolean);
@@ -432,7 +456,9 @@ async function main() {
       }
 
       if (method === "GET" && pathname === "/memory/recent") {
-        const limit = Number.parseInt(url.searchParams.get("limit") ?? "12", 10);
+        const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "12", 10);
+        // NaN or out-of-range values would throw inside better-sqlite3.
+        const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 12;
         sendJson(response, 200, backendRuntime.memoryStore.listRecent(limit));
         return;
       }
@@ -607,7 +633,8 @@ async function main() {
         }
         // Scroll wheel units: the executor divides by 120 per line; ~3 lines
         // per "notch" feels like one trackpad swipe.
-        const notches = Math.min(Math.max(Math.round(input.amount ?? 3), 1), 20);
+        const requested = typeof input.amount === "number" && Number.isFinite(input.amount) ? input.amount : 3;
+        const notches = Math.min(Math.max(Math.round(requested), 1), 20);
         const delta = notches * 120;
         const scrollX = direction === "left" ? -delta : direction === "right" ? delta : 0;
         const scrollY = direction === "up" ? -delta : direction === "down" ? delta : 0;
@@ -767,7 +794,8 @@ async function main() {
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unhandled sidecar failure.";
       logger.error(`${method} ${pathname} failed`, { error: msg, stack: error instanceof Error ? error.stack : undefined });
-      sendJson(response, 500, { error: msg });
+      // Oversized bodies are a client error, not a server failure.
+      sendJson(response, error instanceof PayloadTooLargeError ? 413 : 500, { error: msg });
     }
   });
 

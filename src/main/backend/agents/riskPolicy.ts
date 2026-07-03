@@ -1,3 +1,5 @@
+import { sensitivePatterns } from "../../../shared/sensitiveContent";
+
 export type RiskLevel = "allow" | "approval_required" | "blocked";
 
 export interface RiskDecision {
@@ -20,12 +22,12 @@ const blockedShellMatchers = [
 ];
 
 const approvalMatchers = [
-  { pattern: /\b(payment|purchase|buy|checkout|order)\b/i, reason: "Payments and purchases need explicit user approval." },
-  { pattern: /\b(password|token|api key|secret|credential)\b/i, reason: "Credentials and secrets need explicit user approval." },
-  { pattern: /\b(send|email|message|post|publish|submit)\b/i, reason: "External sends or submissions need explicit user approval." },
-  { pattern: /\bdelete\b.*\b(all|everything|entire|mass|bulk)\b/i, reason: "Mass deletion needs explicit user approval." },
-  { pattern: /\b(rm\s+-rf|diskutil|mkfs|sudo)\b/i, reason: "Destructive or privileged shell actions need explicit user approval." },
-  { pattern: /\b(legal|financial|tax|bank|medical)\b/i, reason: "Highly sensitive domains need explicit user approval." }
+  { pattern: sensitivePatterns.payments, reason: "Payments and purchases need explicit user approval." },
+  { pattern: sensitivePatterns.credentials, reason: "Credentials and secrets need explicit user approval." },
+  { pattern: sensitivePatterns.externalSends, reason: "External sends or submissions need explicit user approval." },
+  { pattern: sensitivePatterns.massDeletion, reason: "Mass deletion needs explicit user approval." },
+  { pattern: sensitivePatterns.destructiveShell, reason: "Destructive or privileged shell actions need explicit user approval." },
+  { pattern: sensitivePatterns.sensitiveDomains, reason: "Highly sensitive domains need explicit user approval." }
 ];
 
 export function findHardBlockedShellReason(command: string): string | undefined {

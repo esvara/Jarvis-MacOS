@@ -70,6 +70,7 @@ enum InputActionRequestParserError: Error, Equatable {
   case unsupportedPath(String)
   case missingContentLength
   case invalidContentLength
+  case payloadTooLarge
   case invalidJSON
 
   var message: String {
@@ -86,6 +87,8 @@ enum InputActionRequestParserError: Error, Equatable {
       return "Missing Content-Length header"
     case .invalidContentLength:
       return "Invalid Content-Length header"
+    case .payloadTooLarge:
+      return "Request body exceeds the maximum allowed size"
     case .invalidJSON:
       return "Request body is not valid JSON"
     }

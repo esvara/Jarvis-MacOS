@@ -15,6 +15,7 @@ import type {
   SettingsData
 } from "../../shared/types";
 import { resolveAppLogsDirectory } from "../../shared/appIdentity";
+import { redactSensitiveText } from "../../shared/sensitiveContent";
 import { ApprovalHub } from "./approvalHub";
 import { buildAgents, formatApprovalRequest, streamEventToBackendEvent, type BuiltAgents } from "./agents";
 import { MemoryStore } from "./memory/memoryStore";
@@ -27,7 +28,8 @@ function blogLine(level: string, msg: string, data?: unknown) {
   if (data !== undefined) {
     try { line += ` ${JSON.stringify(data)}`; } catch { line += " [unserializable]"; }
   }
-  try { fs.appendFileSync(LOG_FILE, line + "\n"); } catch { /* best-effort */ }
+  // Error stacks and payloads may carry keys/tokens; the log persists on disk.
+  try { fs.appendFileSync(LOG_FILE, redactSensitiveText(line) + "\n"); } catch { /* best-effort */ }
 }
 
 type TaskRecord = {

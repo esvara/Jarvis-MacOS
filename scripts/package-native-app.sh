@@ -135,8 +135,12 @@ PLIST
 xattr -dr com.apple.quarantine "$APP_DIR" 2>/dev/null || true
 
 # Use a stable signing identity so TCC permissions persist across rebuilds.
-# "Jarvis Dev Stable" is a local self-signed certificate in the login keychain.
-# Falls back to ad-hoc if the certificate isn't installed.
+# The default identity is a local self-signed certificate in the login
+# keychain. It intentionally keeps the legacy "Samantha Dev Stable" name:
+# macOS TCC permissions (Accessibility, Screen Recording, Documents) are tied
+# to bundle id + signing identity, so switching to a differently-named
+# certificate resets every permission grant. Override with SIGN_IDENTITY when
+# building your own distribution. Falls back to ad-hoc if not installed.
 # A self-signed identity signs fine even when find-identity does not list it
 # as "valid" (that requires trust settings), so attempt the real identity
 # first and only fall back to ad-hoc when codesign itself refuses.

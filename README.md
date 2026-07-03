@@ -9,6 +9,12 @@
   Talk to Jarvis. It briefs Codex or Claude, sends the prompt into their app window, and narrates progress back to you.
 </p>
 
+<p align="center">
+  <a href="https://github.com/esvara/Jarvis-MacOS/actions/workflows/ci.yml"><img src="https://github.com/esvara/Jarvis-MacOS/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/esvara/Jarvis-MacOS/releases"><img src="https://img.shields.io/github/v/release/esvara/Jarvis-MacOS?include_prereleases" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license" /></a>
+</p>
+
 ---
 
 > **Warning:** Jarvis uses macOS Accessibility to type into and click other applications on your behalf. Only use it on systems and accounts you control. By using this project you accept those risks; the maintainers assume no responsibility or liability for loss, damage, misuse, data exposure, or other consequences.
@@ -69,6 +75,8 @@ swift build
 ./scripts/package-native-app.sh   # produces dist-native/Jarvis.app
 open dist-native/Jarvis.app
 ```
+
+> **Build order matters:** the packaging script does **not** rebuild the TypeScript bundles. Always run `npm run build:sidecar && npm run build:voice` before `./scripts/package-native-app.sh` (or use `npm run build`, which chains everything) — otherwise stale sidecar/voice code ships inside the app.
 
 Set `SIGN_IDENTITY` to your own signing identity — a stable identity keeps macOS TCC permissions across rebuilds. On first launch, onboarding walks you through the API key and each macOS permission.
 

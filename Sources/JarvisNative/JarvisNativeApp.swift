@@ -27,6 +27,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionCoordinator: permissionCoordinator,
         authToken: localAuthToken
       )
+      server.onListenerFailed = { [weak self] message in
+        Task { @MainActor in
+          self?.model.errorMessage = message
+        }
+      }
       server.start()
       inputServer = server
     } catch {

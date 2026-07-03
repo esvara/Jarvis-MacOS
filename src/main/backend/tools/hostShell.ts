@@ -9,6 +9,18 @@ import { findHardBlockedShellReason } from "../agents/riskPolicy";
 
 const execAsync = promisify(exec);
 
+// The agent controls timeoutMs; without bounds a missing value runs with no
+// timeout at all and a huge one holds the task hostage.
+const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
+const MAX_COMMAND_TIMEOUT_MS = 300_000;
+
+function boundedTimeoutMs(requested: number | undefined): number {
+  if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) {
+    return DEFAULT_COMMAND_TIMEOUT_MS;
+  }
+  return Math.min(requested, MAX_COMMAND_TIMEOUT_MS);
+}
+
 export class HostShell implements Shell {
   constructor(private readonly cwd = process.env.HOME ?? process.cwd()) {}
 
@@ -34,7 +46,7 @@ export class HostShell implements Shell {
         const result = await execAsync(command, {
           cwd: this.cwd,
           shell: "/bin/zsh",
-          timeout: action.timeoutMs,
+          timeout: boundedTimeoutMs(action.timeoutMs),
           maxBuffer: action.maxOutputLength ?? 1024 * 1024
         });
         output.push({
@@ -76,8 +88,4 @@ export class HostShell implements Shell {
       }
     };
   }
-}
-
-export function isCommandHardBlocked(command: string): boolean {
-  return Boolean(findHardBlockedShellReason(command));
 }

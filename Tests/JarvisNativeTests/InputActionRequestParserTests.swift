@@ -92,6 +92,22 @@ final class InputActionRequestParserTests: XCTestCase {
           authorization: nil)))
   }
 
+  func testOversizedContentLengthIsRejected() {
+    let request = Data(
+      [
+        "POST /action HTTP/1.1",
+        "Host: localhost",
+        "Content-Type: application/json",
+        "Content-Length: \(InputActionRequestParser.maxBodyBytes + 1)",
+        "",
+        ""
+      ].joined(separator: "\r\n").utf8)
+
+    XCTAssertThrowsError(try InputActionRequestParser.parse(request)) { error in
+      XCTAssertEqual(error as? InputActionRequestParserError, .payloadTooLarge)
+    }
+  }
+
   func testMissingContentLengthIsRejected() {
     let request = Data(
       [

@@ -17,6 +17,7 @@ import type {
 } from "../shared/types";
 import type { CodexBridgeMode } from "../shared/samanthaConfig";
 import { defaultSettings } from "../shared/defaults";
+import { redactSensitiveText, sensitivePatterns } from "../shared/sensitiveContent";
 import { NativeComputerBridge } from "../main/backend/tools/nativeComputerBridge";
 
 const execFileAsync = promisify(execFile);
@@ -52,10 +53,10 @@ function expandHome(filePath: string): string {
 
 function isSensitiveCommand(command: string): string | undefined {
   const checks = [
-    { pattern: /\b(password|token|api key|secret|credential)\b/i, reason: "Codex prompts that mention credentials or secrets need explicit user handling." },
-    { pattern: /\b(payment|purchase|buy|checkout|order)\b/i, reason: "Payments and purchases are not sent to Codex automatically." },
-    { pattern: /\b(send|email|message|post|publish|submit)\b/i, reason: "External sends or submissions need explicit confirmation outside the bridge." },
-    { pattern: /\b(rm\s+-rf|diskutil|mkfs|sudo|delete all|erase)\b/i, reason: "Destructive or privileged actions are blocked by the Codex bridge." }
+    { pattern: sensitivePatterns.credentials, reason: "Codex prompts that mention credentials or secrets need explicit user handling." },
+    { pattern: sensitivePatterns.payments, reason: "Payments and purchases are not sent to Codex automatically." },
+    { pattern: sensitivePatterns.externalSends, reason: "External sends or submissions need explicit confirmation outside the bridge." },
+    { pattern: sensitivePatterns.destructiveShellBroad, reason: "Destructive or privileged actions are blocked by the Codex bridge." }
   ];
   return checks.find((check) => check.pattern.test(command))?.reason;
 }
@@ -194,7 +195,7 @@ export class CodexBridge {
     const read = await this.nativeBridge.readAgent(agent);
     const sessionRead = agent === "codex" ? await this.readLatestCodexSessionText() : null;
     const recentEvents = await this.recentEvents(1);
-    const visibleText = this.redactSensitive((sessionRead?.text || read.text).trim());
+    const visibleText = redactSensitiveText((sessionRead?.text || read.text).trim());
     const excerpt = this.lastUsefulLines(visibleText, 18);
     const readableExcerpt = this.summaryTextFromExcerpt(excerpt) || excerpt;
     const operationalText = this.operationalTextFromExcerpt(excerpt);
@@ -396,7 +397,7 @@ export class CodexBridge {
         .filter(Boolean)
         .slice(-600)
         .flatMap((line) => this.codexSessionLineToText(line));
-      const text = this.redactSensitive(items.slice(-30).join("\n"));
+      const text = redactSensitiveText(items.slice(-30).join("\n"));
       if (!text.trim()) {
         return undefined;
       }
@@ -524,14 +525,6 @@ export class CodexBridge {
 
   private hasWorkingSignal(text: string): boolean {
     return /\b(running|working|executing|thinking|building|testing|applying|calling|tool|in progress|revisando|ejecutando|compilando|probando|aplicando)\b/i.test(text);
-  }
-
-  private redactSensitive(text: string): string {
-    return text
-      .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g, "[redacted-openai-key]")
-      .replace(/\bBearer\s+[A-Za-z0-9._-]{20,}\b/g, "Bearer [redacted-token]")
-      .replace(/\b(JARVIS_AUTH_TOKEN|OPENAI_API_KEY)=\S+/g, "$1=[redacted]")
-      .replace(/\b(api[_ -]?key|token|secret|password):\s*\S+/gi, "$1: [redacted]");
   }
 
   private summarizePmStatus(input: {

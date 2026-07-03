@@ -13,9 +13,10 @@ final class InputActionServer: @unchecked Sendable {
   private let permissionCoordinator: PermissionCoordinator
   private let authToken: String
   private var actionsBlocked = false
-  @MainActor private var lastDeliveryVerified = false
-  @MainActor private var lastDeliveryHandoff = false
   let port: UInt16
+  /// Called when the listener cannot bind (e.g. another instance holds the
+  /// port); binding fails asynchronously, so the init throw never sees it.
+  var onListenerFailed: (@Sendable (String) -> Void)?
 
   init(
     port: UInt16 = 4819,
@@ -38,6 +39,13 @@ final class InputActionServer: @unchecked Sendable {
   func start() {
     listener.newConnectionHandler = { [weak self] connection in
       self?.handleConnection(connection)
+    }
+    listener.stateUpdateHandler = { [weak self] state in
+      guard let self, case .failed(let error) = state else { return }
+      let message = "Input server failed on port \(self.port): \(error.localizedDescription). "
+        + "Another Jarvis or Samantha instance may already be running."
+      NSLog("%@", message)
+      self.onListenerFailed?(message)
     }
     listener.start(queue: .global(qos: .userInteractive))
   }
@@ -69,6 +77,16 @@ final class InputActionServer: @unchecked Sendable {
       var nextBuffer = buffer
       if let data {
         nextBuffer.append(data)
+      }
+
+      // Headers + max body with generous slack; without this cap a client
+      // that never completes a request could grow the buffer without bound.
+      if nextBuffer.count > InputActionRequestParser.maxBodyBytes + 65_536 {
+        self.sendResponse(
+          connection: connection,
+          status: 413,
+          body: self.responseJSON(ok: false, error: "Request too large"))
+        return
       }
 
       do {
@@ -357,13 +375,13 @@ final class InputActionServer: @unchecked Sendable {
         }
 
         do {
-          try await self.deliverPrompt(prompt, to: target)
+          let outcome = try await self.deliverPrompt(prompt, to: target)
           self.sendResponse(
             connection: connection,
             status: 200,
             body: self.responseJSON(ok: true, extra: [
-              "verified": self.lastDeliveryVerified,
-              "handoff": self.lastDeliveryHandoff
+              "verified": outcome == .verified,
+              "handoff": outcome == .handoff
             ]))
         } catch {
           self.sendResponse(
@@ -622,7 +640,9 @@ final class InputActionServer: @unchecked Sendable {
   }
 
   @MainActor
-  private func deliverPrompt(_ prompt: String, to target: AgentAppTarget) async throws {
+  // Returns the outcome per request; shared "last delivery" state would let
+  // concurrent deliveries report each other's result.
+  private func deliverPrompt(_ prompt: String, to target: AgentAppTarget) async throws -> DeliveryOutcome {
     let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
       throw InputActionError.invalidField("\(target.displayName) prompt must not be empty")
@@ -642,20 +662,13 @@ final class InputActionServer: @unchecked Sendable {
       throw InputActionError.invalidField("\(target.displayName) is not running and could not be opened")
     }
 
-    // Reset before delivering so a thrown error can't leave the previous
-    // delivery's outcome behind for the response handler to report.
-    lastDeliveryVerified = false
-    lastDeliveryHandoff = false
-
-    let outcome = try await pasteAndVerify(
+    return try await pasteAndVerify(
       trimmed,
       into: app,
       displayName: target.displayName,
       submit: true,
       requireTextInput: false,
       openNewChat: true)
-    lastDeliveryVerified = outcome == .verified
-    lastDeliveryHandoff = outcome == .handoff
   }
 
   /// Open (if needed) an arbitrary app by display name and paste text into its
@@ -999,8 +1012,13 @@ final class InputActionServer: @unchecked Sendable {
     depth: Int,
     results: inout [AXUIElement],
     visited: inout Int,
-    maxDepth: Int = 12,
-    maxVisited: Int = 600
+    // Same limits as findClickable: Electron/Chromium AX trees run deep, and
+    // shallower defaults made text-input lookup fail where click lookup worked.
+    // Deliberately also used by delivery verification (pasteLandedAnywhere):
+    // it must reach any input focusTextInput found, even though each visited
+    // node is an AX IPC call — correctness of "verified" beats speed here.
+    maxDepth: Int = 30,
+    maxVisited: Int = 6_000
   ) {
     guard depth < maxDepth, visited < maxVisited else { return }
     visited += 1
@@ -1119,6 +1137,8 @@ final class InputActionServer: @unchecked Sendable {
       phrase = "Forbidden"
     case 409:
       phrase = "Conflict"
+    case 413:
+      phrase = "Payload Too Large"
     case 500:
       phrase = "Internal Server Error"
     default:

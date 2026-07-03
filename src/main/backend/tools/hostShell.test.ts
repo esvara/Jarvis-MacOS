@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { isCommandHardBlocked } from "./hostShell";
+import { findHardBlockedShellReason } from "../agents/riskPolicy";
 
-describe("isCommandHardBlocked", () => {
+describe("findHardBlockedShellReason", () => {
   it("blocks destructive erase commands", () => {
-    expect(isCommandHardBlocked("rm -rf /")).toBe(true);
-    expect(isCommandHardBlocked("diskutil eraseDisk APFS TEST disk3")).toBe(true);
-    expect(isCommandHardBlocked("rm -rf ~")).toBe(true);
-    expect(isCommandHardBlocked("security find-generic-password -s openai -w")).toBe(true);
+    expect(findHardBlockedShellReason("rm -rf /")).toBeTruthy();
+    expect(findHardBlockedShellReason("diskutil eraseDisk APFS TEST disk3")).toBeTruthy();
+    expect(findHardBlockedShellReason("rm -rf ~")).toBeTruthy();
+    expect(findHardBlockedShellReason("security find-generic-password -s openai -w")).toBeTruthy();
   });
 
   it("allows ordinary inspection commands", () => {
-    expect(isCommandHardBlocked("pwd")).toBe(false);
-    expect(isCommandHardBlocked("ls -la ~/Desktop")).toBe(false);
+    expect(findHardBlockedShellReason("pwd")).toBeUndefined();
+    expect(findHardBlockedShellReason("ls -la ~/Desktop")).toBeUndefined();
   });
 });
