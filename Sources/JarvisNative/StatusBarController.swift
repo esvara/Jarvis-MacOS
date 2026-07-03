@@ -380,7 +380,7 @@ private struct StatusBarSettingsView: View {
           }
 
           if (model.settings.voiceProvider ?? "openai") == "local" {
-            Text("Runs fully on-device: Apple speech recognition + Ollama + system voice. Requires Ollama running with qwen3:8b pulled. No API key, no cloud.")
+            Text("Runs fully on-device: Apple speech recognition + Ollama + system voice. Requires Ollama running with qwen3:4b-instruct pulled. No API key, no cloud.")
               .font(.system(size: 10))
               .foregroundStyle(.secondary)
           }

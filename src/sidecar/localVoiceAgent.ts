@@ -8,8 +8,11 @@ import type { CodexBridge } from "./codexBridge";
 /// bridge the cloud voice providers use. Nothing leaves the machine.
 
 const OLLAMA_URL = process.env.JARVIS_OLLAMA_URL ?? "http://127.0.0.1:11434";
-/** Best sub-8B tool-calling model per 2026 community benchmarks (BFCL). */
-const DEFAULT_LOCAL_MODEL = process.env.JARVIS_LOCAL_MODEL ?? "qwen3:8b";
+/// Measured on a MacBook Air M5 16 GB (2026-07-03): qwen3:4b-instruct answers
+/// in ~1.5-3 s/turn using ~2.5 GB with solid tool calling; qwen3:8b is
+/// smarter but needs ~6 GB and ~4-8 s/turn. Plain "qwen3:4b" is the THINKING
+/// variant — 70+ s/turn with reasoning leaking into the reply; never use it.
+const DEFAULT_LOCAL_MODEL = process.env.JARVIS_LOCAL_MODEL ?? "qwen3:4b-instruct";
 const MAX_HISTORY_MESSAGES = 24;
 const MAX_TOOL_ROUNDS = 4;
 
@@ -121,8 +124,8 @@ export class LocalVoiceAgent {
       const detail = error instanceof Error ? error.message : String(error);
       const hint = /fetch failed|ECONNREFUSED/i.test(detail)
         ? language === "en"
-          ? "Ollama is not running. Install it from ollama.com and run: ollama pull qwen3:8b"
-          : "Ollama no está corriendo. Instálalo desde ollama.com y ejecuta: ollama pull qwen3:8b"
+          ? "Ollama is not running. Install it from ollama.com and run: ollama pull qwen3:4b-instruct"
+          : "Ollama no está corriendo. Instálalo desde ollama.com y ejecuta: ollama pull qwen3:4b-instruct"
         : detail;
       return { ok: false, reply: "", error: hint };
     }
