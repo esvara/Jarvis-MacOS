@@ -282,10 +282,18 @@ final class AppModel: ObservableObject {
     parakeetReady = (try? await client.parakeetReady()) ?? false
   }
 
+  /// Guards against overlapping warmups (double-clicking "Reload / warm
+  /// models", or an engine switch racing a Connect) — concurrent runs would
+  /// interleave their writes to `localWarmupStatus`.
+  private var warmupInFlight = false
+
   /// Warms the local models (LLM into memory, Parakeet inference path) and
   /// publishes a live status the Local Voice card renders. Safe to call on
   /// connect and after any engine/provider switch.
   func warmLocalModels() async {
+    guard !warmupInFlight else { return }
+    warmupInFlight = true
+    defer { warmupInFlight = false }
     let english = assistantLanguage == "en"
     localWarmupStatus = english ? "Loading local model…" : "Cargando modelo local…"
     async let llm: () = warmLocalLLM()
@@ -304,10 +312,23 @@ final class AppModel: ObservableObject {
 
   private func waitForParakeet(english: Bool) async {
     localWarmupStatus = english ? "Loading Parakeet speech model…" : "Cargando el modelo de voz Parakeet…"
+    var unreachable = 0
     for _ in 0 ..< 40 {  // up to ~40 s on first download
-      if (try? await client.parakeetReady()) == true {
+      switch await client.parakeetHealth() {
+      case .ready:
         parakeetReady = true
         return
+      case .loading:
+        unreachable = 0
+      case .unreachable:
+        // The Parakeet LaunchAgent isn't answering; a couple of misses means
+        // it's down, so stop instead of burning the full 40 s. The card's
+        // "not ready" pill surfaces the state to the user.
+        unreachable += 1
+        if unreachable >= 3 {
+          parakeetReady = false
+          return
+        }
       }
       try? await Task.sleep(nanoseconds: 1_000_000_000)
     }

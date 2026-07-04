@@ -10,6 +10,7 @@ com.jarvis.parakeet LaunchAgent.
 import io
 import json
 import os
+import queue
 import threading
 import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -22,7 +23,7 @@ _model = None
 _model_error = None
 # MLX streams are thread-local: the model must be loaded AND run from the
 # same thread, so all inference goes through this single worker queue.
-_jobs = __import__("queue").Queue()
+_jobs = queue.Queue()
 
 
 def _worker():

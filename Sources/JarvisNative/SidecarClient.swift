@@ -44,14 +44,24 @@ struct SidecarClient: Sendable {
 
   /// Direct check of the Parakeet STT server's readiness (127.0.0.1:4821).
   func parakeetReady() async -> Bool {
-    guard let url = URL(string: "http://127.0.0.1:4821/health") else { return false }
+    await parakeetHealth() == .ready
+  }
+
+  /// Tri-state health so callers can tell "server up, model still loading"
+  /// (keep waiting) from "server unreachable" (stop waiting — the LaunchAgent
+  /// is down, so polling for the full timeout is wasted).
+  enum ParakeetHealth { case ready, loading, unreachable }
+
+  func parakeetHealth() async -> ParakeetHealth {
+    guard let url = URL(string: "http://127.0.0.1:4821/health") else { return .unreachable }
     var request = URLRequest(url: url)
     request.timeoutInterval = 3
-    guard let (data, _) = try? await URLSession.shared.data(for: request) else { return false }
+    guard let (data, _) = try? await URLSession.shared.data(for: request) else { return .unreachable }
     struct Reply: Codable {
       var ready: Bool?
     }
-    return (try? JSONDecoder().decode(Reply.self, from: data))?.ready ?? false
+    let ready = (try? JSONDecoder().decode(Reply.self, from: data))?.ready ?? false
+    return ready ? .ready : .loading
   }
 
   struct LocalVoiceWarmupResult: Codable {

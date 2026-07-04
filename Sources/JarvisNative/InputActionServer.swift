@@ -763,6 +763,41 @@ final class InputActionServer: @unchecked Sendable {
       replaceExisting: true)
   }
 
+  /// Activate `app` and block until it is actually the frontmost application,
+  /// re-activating every 2 s. Throws if it never comes forward. Shared by the
+  /// paste, submit, and discard paths so the wait loop lives in one place.
+  @MainActor
+  private func activateAndWaitFrontmost(
+    _ app: NSRunningApplication,
+    displayName: String,
+    timeoutMs: Int = 5_000
+  ) async throws {
+    app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+    var waited = 0
+    while NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier,
+          waited < timeoutMs {
+      try await Task.sleep(for: .milliseconds(200))
+      waited += 200
+      if waited % 2_000 == 0 {
+        app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+      }
+    }
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
+      throw InputActionError.invalidField("\(displayName) did not come to the foreground")
+    }
+  }
+
+  /// Let the freshly-activated window settle, then focus its text input via
+  /// Accessibility. Used by the submit/discard paths before sending a keypress.
+  @MainActor
+  private func focusAgentTextInput(_ app: NSRunningApplication) async throws {
+    try await Task.sleep(for: .milliseconds(400))
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    _ = focusTextInput(in: axApp)
+    try await Task.sleep(for: .milliseconds(200))
+  }
+
   /// Clears the agent's chat box (select-all + delete) — discards a brief
   /// that was typed but not sent.
   @MainActor
@@ -770,21 +805,8 @@ final class InputActionServer: @unchecked Sendable {
     guard let app = findAgentApplication(target) else {
       throw InputActionError.invalidField("\(target.displayName) is not running")
     }
-    app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-    var waited = 0
-    while NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier,
-          waited < 5_000 {
-      try await Task.sleep(for: .milliseconds(200))
-      waited += 200
-    }
-    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
-      throw InputActionError.invalidField("\(target.displayName) did not come to the foreground")
-    }
-    try await Task.sleep(for: .milliseconds(400))
-    let axApp = AXUIElementCreateApplication(app.processIdentifier)
-    AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-    _ = focusTextInput(in: axApp)
-    try await Task.sleep(for: .milliseconds(200))
+    try await activateAndWaitFrontmost(app, displayName: target.displayName)
+    try await focusAgentTextInput(app)
     try executor.execute(InputAction(
       type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
       combo: "cmd,a", scrollX: nil, scrollY: nil,
@@ -803,21 +825,8 @@ final class InputActionServer: @unchecked Sendable {
     guard let app = findAgentApplication(target) else {
       throw InputActionError.invalidField("\(target.displayName) is not running")
     }
-    app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-    var waited = 0
-    while NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier,
-          waited < 5_000 {
-      try await Task.sleep(for: .milliseconds(200))
-      waited += 200
-    }
-    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
-      throw InputActionError.invalidField("\(target.displayName) did not come to the foreground")
-    }
-    try await Task.sleep(for: .milliseconds(400))
-    let axApp = AXUIElementCreateApplication(app.processIdentifier)
-    AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-    _ = focusTextInput(in: axApp)
-    try await Task.sleep(for: .milliseconds(200))
+    try await activateAndWaitFrontmost(app, displayName: target.displayName)
+    try await focusAgentTextInput(app)
     try executor.execute(InputAction(
       type: .keypress, x: nil, y: nil, button: nil, text: nil, keys: ["return"],
       combo: nil, scrollX: nil, scrollY: nil,
@@ -991,20 +1000,7 @@ final class InputActionServer: @unchecked Sendable {
     openNewChat: Bool = false,
     replaceExisting: Bool = false
   ) async throws -> DeliveryOutcome {
-    app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-
-    var waited = 0
-    while NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier,
-          waited < 8_000 {
-      try await Task.sleep(for: .milliseconds(200))
-      waited += 200
-      if waited % 2_000 == 0 {
-        app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-      }
-    }
-    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
-      throw InputActionError.invalidField("\(displayName) did not come to the foreground")
-    }
+    try await activateAndWaitFrontmost(app, displayName: displayName, timeoutMs: 8_000)
     // Give the freshly-activated window a moment to settle its first responder.
     try await Task.sleep(for: .milliseconds(600))
 

@@ -152,7 +152,12 @@ final class LocalVoiceController: NSObject {
     }
 
     capturing = true
-    onPhaseChange?("listening")
+    // When resuming capture mid-reply (hands-free barge-in), Jarvis is still
+    // speaking — keep the "speaking" phase instead of flashing "listening".
+    // The phase advances naturally once the reply's utterances drain.
+    if interruptSpeech || (pendingUtterances == 0 && !synthesizer.isSpeaking) {
+      onPhaseChange?("listening")
+    }
     if continuousMode {
       startSilenceWatch()
     }
@@ -471,27 +476,8 @@ final class LocalVoiceController: NSObject {
   /// cold-start cost: a short silent clip exercises the whole Parakeet path.
   nonisolated static func warmUpParakeet() {
     Task.detached(priority: .background) {
-      var silence = Data(capacity: 44 + 6400)
-      func appendLE(_ value: UInt32) {
-        withUnsafeBytes(of: value.littleEndian) { silence.append(contentsOf: $0) }
-      }
-      func appendLE16(_ value: UInt16) {
-        withUnsafeBytes(of: value.littleEndian) { silence.append(contentsOf: $0) }
-      }
-      silence.append(contentsOf: Array("RIFF".utf8))
-      appendLE(36 + 6400)
-      silence.append(contentsOf: Array("WAVE".utf8))
-      silence.append(contentsOf: Array("fmt ".utf8))
-      appendLE(16)
-      appendLE16(1)
-      appendLE16(1)
-      appendLE(16_000)
-      appendLE(32_000)
-      appendLE16(2)
-      appendLE16(16)
-      silence.append(contentsOf: Array("data".utf8))
-      appendLE(6400)
-      silence.append(Data(count: 6400))
+      // 0.2 s of silence (16 kHz mono 16-bit → 6400 bytes) exercises the path.
+      let silence = makeWav16k(pcm16: Data(count: 6400))
       _ = try? await transcribeWithParakeet(silence)
     }
   }
@@ -539,6 +525,35 @@ final class LocalVoiceController: NSObject {
       }
     }
   }
+}
+
+/// Wraps 16 kHz mono 16-bit PCM samples in a WAV container. Shared by the
+/// Parakeet warm-up clip and the live accumulator so the RIFF header is built
+/// in exactly one place.
+func makeWav16k(pcm16: Data) -> Data {
+  var data = Data(capacity: 44 + pcm16.count)
+  let byteCount = UInt32(pcm16.count)
+  func appendLE(_ value: UInt32) {
+    withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+  }
+  func appendLE16(_ value: UInt16) {
+    withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+  }
+  data.append(contentsOf: Array("RIFF".utf8))
+  appendLE(36 + byteCount)
+  data.append(contentsOf: Array("WAVE".utf8))
+  data.append(contentsOf: Array("fmt ".utf8))
+  appendLE(16)
+  appendLE16(1)       // PCM
+  appendLE16(1)       // mono
+  appendLE(16_000)    // sample rate
+  appendLE(32_000)    // byte rate = 16000 * 1 channel * 2 bytes
+  appendLE16(2)       // block align
+  appendLE16(16)      // bits per sample
+  data.append(contentsOf: Array("data".utf8))
+  appendLE(byteCount)
+  data.append(pcm16)
+  return data
 }
 
 /// Thread-safe PCM accumulator for the Parakeet path: the realtime audio tap
@@ -590,29 +605,8 @@ private final class PcmAccumulatorBox: @unchecked Sendable {
       pcm16[i] = Int16(max(-1.0, min(1.0, sample)) * 32767.0)
     }
 
-    var data = Data(capacity: 44 + pcm16.count * 2)
-    let byteCount = UInt32(pcm16.count * 2)
-    func appendLE(_ value: UInt32) {
-      withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-    }
-    func appendLE16(_ value: UInt16) {
-      withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-    }
-    data.append(contentsOf: Array("RIFF".utf8))
-    appendLE(36 + byteCount)
-    data.append(contentsOf: Array("WAVE".utf8))
-    data.append(contentsOf: Array("fmt ".utf8))
-    appendLE(16)
-    appendLE16(1) // PCM
-    appendLE16(1) // mono
-    appendLE(UInt32(targetRate))
-    appendLE(UInt32(targetRate) * 2)
-    appendLE16(2)
-    appendLE16(16)
-    data.append(contentsOf: Array("data".utf8))
-    appendLE(byteCount)
-    pcm16.withUnsafeBytes { data.append(contentsOf: $0) }
-    return data
+    let pcmData = pcm16.withUnsafeBytes { Data($0) }
+    return makeWav16k(pcm16: pcmData)
   }
 }
 
