@@ -55,6 +55,25 @@ final class LocalVoiceController: NSObject {
     synthesizer.delegate = self
   }
 
+  /// Persistent pipeline log (logs/local-voice.log). NSLog output is
+  /// impractical to retrieve from the unified log after the fact, and
+  /// diagnosing "it stopped listening" reports needs the exact transition
+  /// history from the user's session.
+  private nonisolated static let vlogURL = AppIdentity.logsDirectory().appending(path: "local-voice.log")
+
+  nonisolated static func vlog(_ message: String) {
+    NSLog("LocalVoice: %@", message)
+    let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
+    let data = Data(line.utf8)
+    if let handle = try? FileHandle(forWritingTo: vlogURL) {
+      defer { try? handle.close() }
+      _ = try? handle.seekToEnd()
+      try? handle.write(contentsOf: data)
+    } else {
+      try? data.write(to: vlogURL, options: .atomic)
+    }
+  }
+
   var bargeInEnabled = true
 
   func configure(language: String, sttEngine: String = "apple", bargeIn: Bool = true) {
@@ -110,18 +129,25 @@ final class LocalVoiceController: NSObject {
     }
     latestTranscript = ""
     recognitionErrorMessage = ""
-    NSLog(
-      "LocalVoice: startListening engine=%@ locale=%@ continuous=%d",
-      sttEngine, locale.identifier, continuous ? 1 : 0)
+    Self.vlog("startListening engine=\(sttEngine) locale=\(locale.identifier) continuous=\(continuous) interruptSpeech=\(interruptSpeech)")
 
     let inputNode = audioEngine.inputNode
-    // Echo cancellation: without it, the mic hears Jarvis's own reply and
-    // hands-free barge-in would cut the speech off immediately.
-    if !voiceProcessingEnabled {
-      voiceProcessingEnabled = (try? inputNode.setVoiceProcessingEnabled(true)) != nil
+    // Echo cancellation is ONLY needed for barge-in (capturing while Jarvis
+    // speaks). The voice-processing unit switches the input to a multichannel
+    // AEC format that degrades SFSpeechRecognizer after playback cycles —
+    // with barge-in off, keep the plain mic path Apple STT is happiest with.
+    if bargeInEnabled != voiceProcessingEnabled {
+      if (try? inputNode.setVoiceProcessingEnabled(bargeInEnabled)) != nil {
+        voiceProcessingEnabled = bargeInEnabled
+        Self.vlog("voice processing (AEC) now \(bargeInEnabled ? "ON" : "OFF") to match barge-in setting")
+      } else {
+        Self.vlog("WARNING: could not toggle voice processing to \(bargeInEnabled)")
+      }
     }
     let format = inputNode.outputFormat(forBus: 0)
+    Self.vlog("input format sampleRate=\(format.sampleRate) channels=\(format.channelCount) voiceProcessing=\(voiceProcessingEnabled)")
     guard format.sampleRate > 0 else {
+      Self.vlog("ERROR: input format has zero sample rate — no capture possible")
       onError?(
         language == "en"
           ? "No audio input device is available."
@@ -138,7 +164,13 @@ final class LocalVoiceController: NSObject {
     accumulator?.reset(sampleRate: format.sampleRate)
     let appleRequest = request
     inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in
-      appleRequest?.append(buffer)
+      // Voice processing (AEC, enabled for barge-in) switches the input to a
+      // multichannel format (7 ch on MacBook mic arrays): channel 0 is the
+      // processed voice, the rest are reference/beamforming channels.
+      // SFSpeechRecognizer fed the raw multichannel buffer fails silently
+      // with "No speech detected" — hand it a mono copy of channel 0, the
+      // same channel the Parakeet accumulator and the RMS meter read.
+      appleRequest?.append(Self.monoChannel0(buffer) ?? buffer)
       accumulator?.append(buffer)
       micLevel.note(rms: Self.bufferRms(buffer))
     }
@@ -147,6 +179,7 @@ final class LocalVoiceController: NSObject {
       audioEngine.prepare()
       try audioEngine.start()
     } catch {
+      Self.vlog("ERROR: audioEngine.start failed: \(error.localizedDescription)")
       onError?("Could not start the microphone: \(error.localizedDescription)")
       return
     }
@@ -169,10 +202,14 @@ final class LocalVoiceController: NSObject {
         let message = error.localizedDescription
         Task { @MainActor in
           guard let self else { return }
-          // "Canceled"/216 arrive on every normal teardown; keep real failures.
-          if !message.localizedCaseInsensitiveContains("cancel") {
+          // "Canceled"/216 arrive on every normal teardown, and "No speech
+          // detected" (1110) just means the capture window held no words —
+          // the silence path handles that; treating it as a hard failure
+          // tore down hands-free mode after every quiet window.
+          if !message.localizedCaseInsensitiveContains("cancel"),
+             !message.localizedCaseInsensitiveContains("no speech") {
             self.recognitionErrorMessage = message
-            NSLog("LocalVoice: recognition error: %@", message)
+            Self.vlog("recognition error: \(message)")
           }
         }
       }
@@ -225,11 +262,12 @@ final class LocalVoiceController: NSObject {
     let text = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
       let mic = micLevel.snapshot()
-      NSLog(
-        "LocalVoice: empty transcript. speechDetected=%d recognitionError=%@",
-        mic.speechDetected ? 1 : 0, recognitionErrorMessage)
-      if continuousMode && recognitionErrorMessage.isEmpty && !mic.speechDetected {
-        // True silence; keep the hands-free conversation open.
+      Self.vlog("empty transcript. engine=\(sttEngine) speechDetected=\(mic.speechDetected) recognitionError=\(recognitionErrorMessage.isEmpty ? "none" : recognitionErrorMessage)")
+      if continuousMode && recognitionErrorMessage.isEmpty {
+        // No hard error: either true silence, or audio that produced no words
+        // (echo bleed from the reply, background noise, a cough). Either way,
+        // KEEP the hands-free conversation open — tearing it down here left
+        // the mic looking on while nothing listened.
         await startListening(continuous: true)
         return
       }
@@ -253,6 +291,7 @@ final class LocalVoiceController: NSObject {
       return
     }
 
+    Self.vlog("turn committed. engine=\(sttEngine) transcriptChars=\(text.count)")
     onUserTranscript?(text)
     onPhaseChange?("thinking")
     sentenceBuffer = ""
@@ -287,6 +326,30 @@ final class LocalVoiceController: NSObject {
       continuousMode = false
       onError?(error.localizedDescription)
       onPhaseChange?("idle")
+    }
+  }
+
+  /// "Stop" button: cut the reply that is currently playing (and any queued
+  /// sentences) but KEEP the conversation — unlike stop(), which tears the
+  /// whole pipeline down.
+  func interruptPlayback() {
+    guard synthesizer.isSpeaking || pendingUtterances > 0 || !streamFinished else {
+      Self.vlog("interrupt requested but nothing is playing")
+      return
+    }
+    Self.vlog("interrupt: cutting the current reply")
+    synthesizer.stopSpeaking(at: .immediate)
+    pendingUtterances = 0
+    sentenceBuffer = ""
+    streamFinished = true
+    micLevel.setPlaybackMode(false)
+    if continuousMode && !capturing {
+      Task { @MainActor in
+        guard self.continuousMode else { return }
+        await self.startListening(continuous: true)
+      }
+    } else {
+      onPhaseChange?(capturing ? "listening" : "idle")
     }
   }
 
@@ -339,8 +402,48 @@ final class LocalVoiceController: NSObject {
     }
     pendingUtterances += 1
     let utterance = AVSpeechUtterance(string: text)
-    utterance.voice = AVSpeechSynthesisVoice(language: language == "en" ? "en-US" : "es-ES")
+    utterance.voice = Self.bestVoice(for: language)
     synthesizer.speak(utterance)
+  }
+
+  /// Highest-quality installed voice for the language: premium > enhanced >
+  /// default. `AVSpeechSynthesisVoice(language:)` alone always returns the
+  /// compact voice, which is the robotic-sounding worst tier — if the user has
+  /// downloaded an enhanced/premium voice (System Settings > Accessibility >
+  /// Spoken Content > System Voice > Manage Voices…), prefer it. Cached until
+  /// the system reports a voice install/removal (the user can download a
+  /// better voice while Jarvis is running and it should be picked up live).
+  private static var cachedVoice: (language: String, voice: AVSpeechSynthesisVoice?)?
+  private static let voicesChangedObserver: NSObjectProtocol = NotificationCenter.default.addObserver(
+    forName: AVSpeechSynthesizer.availableVoicesDidChangeNotification,
+    object: nil, queue: .main
+  ) { _ in
+    Task { @MainActor in
+      cachedVoice = nil
+      NSLog("LocalVoice: installed voices changed; re-selecting TTS voice")
+    }
+  }
+
+  private static func bestVoice(for language: String) -> AVSpeechSynthesisVoice? {
+    _ = voicesChangedObserver  // arm the invalidation observer on first use
+    if let cached = cachedVoice, cached.language == language {
+      return cached.voice
+    }
+    let prefix = language == "en" ? "en" : "es"
+    let preferred = language == "en" ? "en-US" : "es-ES"
+    let candidates = AVSpeechSynthesisVoice.speechVoices()
+      .filter { $0.language.hasPrefix(prefix) }
+      // Novelty/eloquence voices (Grandma, Rocko…) are compact-quality; the
+      // real ranking is quality tier, then exact-locale match as tiebreak.
+      .sorted { a, b in
+        if a.quality != b.quality { return a.quality.rawValue > b.quality.rawValue }
+        return (a.language == preferred ? 0 : 1) < (b.language == preferred ? 0 : 1)
+      }
+    let voice = candidates.first { $0.quality != .default }
+      ?? AVSpeechSynthesisVoice(language: preferred)
+    NSLog("LocalVoice: TTS voice=%@ quality=%d", voice?.name ?? "system default", voice?.quality.rawValue ?? 0)
+    cachedVoice = (language, voice)
+    return voice
   }
 
   private func settleIfDone() {
@@ -348,11 +451,26 @@ final class LocalVoiceController: NSObject {
     micLevel.setPlaybackMode(false)
     if continuousMode && !capturing {
       // Hands-free conversation: resume listening after the reply finishes.
+      Self.vlog("reply finished; resuming capture")
       Task { @MainActor in
+        // Re-check: a Mute/Stop between scheduling and execution must win —
+        // resuming here would silently re-open the mic behind the user.
+        guard self.continuousMode else {
+          Self.vlog("resume cancelled: continuous mode ended (mute/stop)")
+          return
+        }
         await self.startListening(continuous: true)
       }
     } else if continuousMode && capturing {
-      // Capture already resumed during the reply (barge-in support).
+      // Capture already resumed during the reply (barge-in support). The
+      // user did NOT barge in, so anything the mic flagged as speech during
+      // playback was echo bleed from Jarvis's own reply — clear it, or the
+      // silence watcher instantly commits a garbage turn (stale
+      // speechDetected with lastSpeechAt > 1.6 s ago) and the accumulated
+      // echo audio poisons the next transcription.
+      Self.vlog("reply finished; capture already live (barge-in armed) — clearing echo-tainted mic state")
+      micLevel.reset()
+      pcmAccumulator.reset(sampleRate: pcmAccumulator.currentSampleRate())
       onPhaseChange?("listening")
     } else {
       onPhaseChange?("idle")
@@ -374,6 +492,7 @@ final class LocalVoiceController: NSObject {
         // and keep listening; the silence rule below then commits their turn.
         if self.pendingUtterances > 0 || self.synthesizer.isSpeaking {
           if snapshot.speechDetected, Date().timeIntervalSince(snapshot.lastSpeechAt) < 0.5 {
+            Self.vlog("barge-in: user spoke over the reply; cutting speech")
             self.synthesizer.stopSpeaking(at: .immediate)
             self.pendingUtterances = 0
             self.micLevel.setPlaybackMode(false)
@@ -392,6 +511,23 @@ final class LocalVoiceController: NSObject {
   private func stopSilenceWatch() {
     silenceTimer?.invalidate()
     silenceTimer = nil
+  }
+
+  /// Mono copy of channel 0 for consumers that can't handle the AEC unit's
+  /// multichannel format. Returns nil for already-mono or non-float buffers
+  /// (caller falls back to the original buffer).
+  private nonisolated static func monoChannel0(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+    guard buffer.format.channelCount > 1,
+          let source = buffer.floatChannelData?[0],
+          let monoFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: buffer.format.sampleRate,
+            channels: 1, interleaved: false),
+          let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+          let target = mono.floatChannelData?[0]
+    else { return nil }
+    mono.frameLength = buffer.frameLength
+    target.update(from: source, count: Int(buffer.frameLength))
+    return mono
   }
 
   private nonisolated static func bufferRms(_ buffer: AVAudioPCMBuffer) -> Float {
@@ -571,6 +707,12 @@ private final class PcmAccumulatorBox: @unchecked Sendable {
     samples.removeAll(keepingCapacity: true)
     self.sampleRate = sampleRate
     lock.unlock()
+  }
+
+  func currentSampleRate() -> Double {
+    lock.lock()
+    defer { lock.unlock() }
+    return sampleRate
   }
 
   func append(_ buffer: AVAudioPCMBuffer) {

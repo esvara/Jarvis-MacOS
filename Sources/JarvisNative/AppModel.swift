@@ -340,14 +340,18 @@ final class AppModel: ObservableObject {
       // Hot-switching mid-capture would leave the old engine's pipeline
       // half-running (no recognizer / stale accumulator) and go silent:
       // stop cleanly and re-arm hands-free once the engine is warm.
-      let wasListening = voiceState.connected && !voiceState.muted
+      // listeningModeActive is the local pipeline's own flag — more reliable
+      // than voiceState, which web-runtime events could have clobbered.
+      let wasListening = listeningModeActive || (voiceState.connected && !voiceState.muted)
       localVoiceController?.stop()
       applyLocalVoiceConfig()
       errorMessage = ""
       syncPhase()
       await warmLocalModels()
       if wasListening {
-        // Seamless: resume listening automatically once warm.
+        // Seamless: resume listening automatically once warm. Restore
+        // connected too — a stray web-runtime event may have cleared it.
+        voiceState.connected = true
         voiceState.muted = false
         listeningModeActive = true
         localVoice.startListeningIfIdle(continuous: true)
@@ -886,7 +890,10 @@ final class AppModel: ObservableObject {
       } else {
         voiceState.muted = true
         listeningModeActive = false
-        await localVoice.stopListeningAndRespond(endContinuous: true)
+        // Hard stop: muting must release the mic (and cut any reply)
+        // immediately and DISCARD what was mid-capture — committing it as a
+        // turn kept the pipeline talking/listening after the user muted.
+        localVoice.stop()
       }
       syncPhase()
       return
@@ -900,6 +907,21 @@ final class AppModel: ObservableObject {
 
   func setVoiceMuted(_ muted: Bool) async {
     guard voiceState.connected else {
+      syncPhase()
+      return
+    }
+    // The local pipeline is not driven by the web runtime: route mute/unmute
+    // to the controller directly, or the mic keeps capturing behind a
+    // muted-looking UI.
+    if isLocalProvider {
+      voiceState.muted = muted
+      listeningModeActive = !muted
+      if muted {
+        localVoiceController?.stop()
+      } else {
+        applyLocalVoiceConfig()
+        await localVoice.startListening(continuous: true)
+      }
       syncPhase()
       return
     }
@@ -1017,6 +1039,12 @@ final class AppModel: ObservableObject {
   }
 
   func interruptVoice() async {
+    // Local pipeline: "Stop" cuts the reply being spoken but keeps the
+    // conversation armed; the web runtime has its own interrupt.
+    if isLocalProvider {
+      localVoiceController?.interruptPlayback()
+      return
+    }
     await voiceController?.interrupt()
   }
 
@@ -1272,6 +1300,14 @@ final class AppModel: ObservableObject {
     case .ready:
       logNativeOverlay("Voice runtime ready.")
     case .state(let state):
+      // The WKWebView runtime keeps emitting state events (connected=false on
+      // load, idle heartbeats) even when the LOCAL provider owns the voice
+      // pipeline. Letting them through clobbers voiceState — an engine
+      // hot-switch then reads connected=false, concludes nothing was
+      // listening, and never re-arms capture.
+      guard !isLocalProvider else {
+        break
+      }
       voiceState = state
       if state.phase != "error" {
         voiceRuntimeErrorMessage = ""
@@ -1292,6 +1328,12 @@ final class AppModel: ObservableObject {
       pendingRealtimeApproval = approval
       syncPhase()
     case .error(let message):
+      // Same isolation as .state: a web-runtime error must not tear down the
+      // local pipeline's listening mode. Log it and move on.
+      guard !isLocalProvider else {
+        logNativeOverlay("Voice runtime error (ignored, local provider active): \(message)")
+        break
+      }
       voiceRuntimeErrorMessage = message
       if !voiceState.connected {
         listeningModeActive = false

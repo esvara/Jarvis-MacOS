@@ -725,9 +725,14 @@ final class InputActionServer: @unchecked Sendable {
     }
   }
 
-  @MainActor
+  /// The brief typed-but-not-sent per agent, so the deferred submit can
+  /// verify it is still in the box (and re-paste it when it never landed —
+  /// blind deliveries into Electron apps sometimes miss the chat box).
+  @MainActor private var pendingBriefs: [String: String] = [:]
+
   // Returns the outcome per request; shared "last delivery" state would let
   // concurrent deliveries report each other's result.
+  @MainActor
   private func deliverPrompt(
     _ prompt: String,
     to target: AgentAppTarget,
@@ -753,7 +758,7 @@ final class InputActionServer: @unchecked Sendable {
       throw InputActionError.invalidField("\(target.displayName) is not running and could not be opened")
     }
 
-    return try await pasteAndVerify(
+    let outcome = try await pasteAndVerify(
       trimmed,
       into: app,
       displayName: target.displayName,
@@ -761,6 +766,8 @@ final class InputActionServer: @unchecked Sendable {
       requireTextInput: false,
       openNewChat: openNewChat,
       replaceExisting: true)
+    pendingBriefs[target.applicationPath] = submit ? nil : trimmed
+    return outcome
   }
 
   /// Activate `app` and block until it is actually the frontmost application,
@@ -788,14 +795,18 @@ final class InputActionServer: @unchecked Sendable {
   }
 
   /// Let the freshly-activated window settle, then focus its text input via
-  /// Accessibility. Used by the submit/discard paths before sending a keypress.
+  /// Accessibility. Used by the submit/discard paths before sending a
+  /// keypress. Returns the app's AX root and the focused input (when found)
+  /// so callers can verify the box's content.
   @MainActor
-  private func focusAgentTextInput(_ app: NSRunningApplication) async throws {
+  @discardableResult
+  private func focusAgentTextInput(_ app: NSRunningApplication) async throws -> (axApp: AXUIElement, textInput: AXUIElement?) {
     try await Task.sleep(for: .milliseconds(400))
     let axApp = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-    _ = focusTextInput(in: axApp)
+    let textInput = focusTextInput(in: axApp)
     try await Task.sleep(for: .milliseconds(200))
+    return (axApp, textInput)
   }
 
   /// Clears the agent's chat box (select-all + delete) — discards a brief
@@ -816,21 +827,47 @@ final class InputActionServer: @unchecked Sendable {
       type: .keypress, x: nil, y: nil, button: nil, text: nil, keys: ["delete"],
       combo: nil, scrollX: nil, scrollY: nil,
       fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
+    pendingBriefs[target.applicationPath] = nil
   }
 
   /// Presses Enter in the agent app's chat box — the deferred "send" step
   /// after a brief was typed with submit=false and the user confirmed it.
+  /// Before sending, verifies the prepared brief is actually in the box and
+  /// re-pastes it when it is not (a blind delivery may have missed the box
+  /// entirely — pressing Enter then just sends nothing).
   @MainActor
   private func submitAgentPrompt(_ target: AgentAppTarget) async throws {
     guard let app = findAgentApplication(target) else {
       throw InputActionError.invalidField("\(target.displayName) is not running")
     }
     try await activateAndWaitFrontmost(app, displayName: target.displayName)
-    try await focusAgentTextInput(app)
+    let (axApp, textInput) = try await focusAgentTextInput(app)
+
+    if let brief = pendingBriefs[target.applicationPath],
+       let textInput,
+       !pasteLandedAnywhere(brief, rememberedInput: textInput, axApp: axApp) {
+      // The brief is verifiably NOT in the box — recover by re-pasting it.
+      NSLog("InputActionServer: pending brief missing from %@'s box; re-pasting before Enter", target.displayName)
+      let pasteboard = NSPasteboard.general
+      pasteboard.clearContents()
+      pasteboard.setString(brief, forType: .string)
+      try executor.execute(InputAction(
+        type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
+        combo: "cmd,a", scrollX: nil, scrollY: nil,
+        fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
+      try await Task.sleep(for: .milliseconds(150))
+      try executor.execute(InputAction(
+        type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
+        combo: "cmd,v", scrollX: nil, scrollY: nil,
+        fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
+      try await Task.sleep(for: .milliseconds(500))
+    }
+
     try executor.execute(InputAction(
       type: .keypress, x: nil, y: nil, button: nil, text: nil, keys: ["return"],
       combo: nil, scrollX: nil, scrollY: nil,
       fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
+    pendingBriefs[target.applicationPath] = nil
   }
 
   /// Open (if needed) an arbitrary app by display name and paste text into its

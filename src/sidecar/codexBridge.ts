@@ -182,9 +182,15 @@ export class CodexBridge {
       "utf8"
     );
     if (!autoSend) {
+      // An unverified (blind) delivery may have missed the box entirely — say
+      // so, instead of letting the voice agent claim it is written. The
+      // deferred submit re-pastes when it finds the box without the brief.
+      const preparedNote = sendResult.verified
+        ? `Jarvis typed the brief into ${agentName}'s prompt box. It has NOT been sent — awaiting the user's confirmation.`
+        : `Jarvis typed the brief into ${agentName} but could NOT verify it reached the prompt box. Ask the user to glance at ${agentName}; on "envíalo" Jarvis re-pastes it if missing and presses Enter.`;
       return await this.recordResult(
         "prepared",
-        `Jarvis typed the brief into ${agentName}'s prompt box. It has NOT been sent — awaiting the user's confirmation.`,
+        preparedNote,
         command,
         {
           needsUserApproval: true,

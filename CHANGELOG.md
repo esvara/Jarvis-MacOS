@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- **Apple Dictation with the local provider**: three compounding bugs made Apple STT appear deaf. The AEC voice-processing unit (enabled for barge-in) feeds a multichannel format (7 ch on MacBook mic arrays) that `SFSpeechRecognizer` fails on — buffers are now downmixed to mono channel 0 before recognition, AEC is only enabled while barge-in is on, and the benign "No speech detected" (1110) recognizer error no longer tears down hands-free mode (it is equivalent to silence).
+- **Hands-free survival**: an empty capture window (echo bleed, noise, a cough) no longer silently kills the conversation; echo-tainted mic state is cleared when a reply finishes so the silence watcher can't commit a garbage turn; and a resume scheduled right before Mute/Stop can no longer re-open the microphone afterwards.
+- **Mute/Stop with the local provider**: the mute toggle and hotkey now hard-stop local capture (previously they only signaled the unused web runtime, leaving the mic hot behind a muted-looking UI), and the Stop button cuts the reply being spoken while keeping the conversation armed.
+- **STT engine hot-switch**: web-runtime state events (connected=false heartbeats) no longer clobber the local pipeline's voice state, which made engine switches conclude nothing was listening and never re-arm capture.
+- **Deferred send reliability**: the native input server remembers the typed-but-unsent brief per agent; on "envíalo" it verifies the brief is still in the agent's box and re-pastes it when missing before pressing Enter (a blind delivery could previously send an empty box), and an unverified delivery is now reported honestly instead of claimed as written.
+- **Local agent history**: conversation history now preserves tool-call rounds — storing only the final sentences taught the small model the in-context pattern "claim the delegation without calling the tool", which broke second delegations.
+- **Warmup robustness**: overlapping warm-up runs are serialized, and waiting for the Parakeet server bails out after ~3 s when the server is unreachable instead of burning the full 40 s timeout.
+
+### Added
+- **Premium TTS voices (local provider)**: the reply voice now picks the highest-quality installed voice (Premium > Enhanced > compact) instead of always using the robotic compact tier, and reacts live when the user downloads a new voice in System Settings (e.g. Marisol Premium). Siri voices are not exposed to third-party apps by macOS.
+- **Local pipeline diagnostics**: `logs/local-voice.log` records every capture transition (engine, input format, commit/empty reason, recognition errors), and the sidecar logs each local-agent turn (transcript preview, tool calls made, delegation outcome) and every tool invocation with truncated args/result.
+
+### Changed
+- **Control Center redesign**: the console is now two zones — compact voice controls on the left, and a full-height **Live Activity** feed that merges the transcript, backend events, notifications, and approvals chronologically (auto-scrolls to the latest entry). Agent status shrank to a thin strip of colored dots (click to hear status), pending approvals surface as an inline actionable banner, an active task shows as a slim row with its Stop button, and the standalone Current Task / Approvals / Agents / Transcript cards are gone. Header actions degrade gracefully on narrow windows instead of overflowing.
+- Code health: the triplicated activate-and-wait-frontmost loop and the duplicated WAV header builder were extracted into shared helpers; `parakeet-server.py` imports `queue` normally.
+
 ### Changed
 - **Delegation flow (all providers)**: briefs are the assistant's interpretation of the user's intent (never a transcript), they are typed into the agent's **current** chat (new chat only on request), and they are **not sent** until the user confirms — a new `send_agent_prompt` tool presses Enter, and the progress monitor starts at the actual send.
 

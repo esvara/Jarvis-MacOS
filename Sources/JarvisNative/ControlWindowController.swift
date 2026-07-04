@@ -71,7 +71,7 @@ private struct ControlCenterView: View {
         content
       }
     }
-    .frame(minWidth: 820, minHeight: 560)
+    .frame(minWidth: 960, minHeight: 600)
     .background(Color(white: 0.06))
     .environment(\.colorScheme, .dark)
     .task {
@@ -93,29 +93,58 @@ private struct ControlCenterView: View {
           .lineLimit(1)
       }
 
-      Spacer()
+      Spacer(minLength: 12)
 
-      StatusPill(label: model.phase.capitalized, color: phaseColor)
-      StatusPill(label: model.voiceState.connected ? "Voice On" : "Voice Off", color: model.voiceState.connected ? .green : .secondary)
-      StatusPill(label: model.health.inputServerAvailable ? "Local Control" : "No Control", color: model.health.inputServerAvailable ? .cyan : .red)
-
-      Button {
-        Task { await model.refresh() }
-      } label: {
-        Label("Refresh", systemImage: "arrow.clockwise")
+      // Degrade gracefully on narrow windows: drop the status pills first,
+      // then the button titles — the actions must never overflow the margin.
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 12) {
+          headerPills
+          headerButtons(compact: false)
+        }
+        headerButtons(compact: false)
+        headerButtons(compact: true)
       }
-      .buttonStyle(ControlButtonStyle())
-
-      Button {
-        Task { await model.stopAllActivity() }
-      } label: {
-        Label("Stop All", systemImage: "stop.fill")
-      }
-      .buttonStyle(ControlButtonStyle(kind: .danger))
     }
     .padding(.horizontal, 28)
     .padding(.top, 24)
     .padding(.bottom, 16)
+  }
+
+  private var headerPills: some View {
+    HStack(spacing: 12) {
+      StatusPill(label: model.phase.capitalized, color: phaseColor)
+      StatusPill(label: model.voiceState.connected ? "Voice On" : "Voice Off", color: model.voiceState.connected ? .green : .secondary)
+      StatusPill(label: model.health.inputServerAvailable ? "Local Control" : "No Control", color: model.health.inputServerAvailable ? .cyan : .red)
+    }
+  }
+
+  private func headerButtons(compact: Bool) -> some View {
+    HStack(spacing: 12) {
+      Button {
+        Task { await model.refresh() }
+      } label: {
+        if compact {
+          Image(systemName: "arrow.clockwise")
+        } else {
+          Label("Refresh", systemImage: "arrow.clockwise")
+        }
+      }
+      .buttonStyle(ControlButtonStyle())
+      .help("Refresh")
+
+      Button {
+        Task { await model.stopAllActivity() }
+      } label: {
+        if compact {
+          Image(systemName: "stop.fill")
+        } else {
+          Label("Stop All", systemImage: "stop.fill")
+        }
+      }
+      .buttonStyle(ControlButtonStyle(kind: .danger))
+      .help("Stop All")
+    }
   }
 
   private var sidebar: some View {
@@ -164,21 +193,24 @@ private struct ControlCenterView: View {
   }
 
   private var consolePanel: some View {
+    // Three columns: compact voice controls | transcript (the primary
+    // content, full height) | status stack. The transcript used to sit
+    // squeezed under the voice card where it was effectively hidden.
     HStack(spacing: 16) {
       VStack(spacing: 14) {
         ControlCard(title: "Voice Operator", icon: "waveform") {
-          VStack(spacing: 16) {
+          VStack(spacing: 12) {
             VoiceWaveView(
               phase: model.phase,
               level: model.voiceState.level,
               connected: model.voiceState.connected,
               muted: model.voiceState.muted
             )
-            .frame(height: 170)
+            .frame(height: 96)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
               Text(voiceTitle)
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
               Text(voiceSubtitle)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -245,80 +277,229 @@ private struct ControlCenterView: View {
           localVoiceCard
         }
 
-        ControlCard(title: "Transcript", icon: "text.bubble") {
-          ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-              if model.transcript.isEmpty {
-                Text("No transcript yet.")
-                  .font(.system(size: 13))
-                  .foregroundStyle(.secondary)
-              } else {
-                ForEach(model.transcript) { entry in
-                  TranscriptRow(entry: entry)
-                }
-              }
-            }
-          }
-        }
+        Spacer(minLength: 0)
       }
-      .frame(width: 390)
+      .frame(width: 360)
 
-      VStack(spacing: 14) {
-        HStack(spacing: 14) {
-          activeTaskCard
-          approvalCard
-        }
-        .frame(height: 210)
-
-        ControlCard(title: "Agents", icon: "person.3.sequence") {
-          VStack(alignment: .leading, spacing: 12) {
-            if model.agentsStatus.isEmpty {
-              SystemRow(label: "Codex", value: model.codexStatus.codexRunning ? "Running" : "Offline", ok: model.codexStatus.codexRunning)
-            } else {
-              ForEach(model.agentsStatus) { agentRow in
-                HStack(spacing: 8) {
-                  SystemRow(
-                    label: agentRow.displayName,
-                    value: agentRow.running ? "Running" : (agentRow.installed ? "Installed" : "Not installed"),
-                    ok: agentRow.running || agentRow.installed
-                  )
-                  Button {
-                    Task { await model.readAgentPmStatus(agentRow.agent) }
-                  } label: {
-                    Image(systemName: "eye.fill")
-                      .font(.system(size: 10, weight: .semibold))
-                  }
-                  .buttonStyle(ControlButtonStyle())
-                  .disabled(!agentRow.running)
-                  .help("Read \(agentRow.displayName) status")
-                }
-              }
-            }
-
-            if let delivery = model.lastDeliveryBadge {
-              HStack(spacing: 5) {
-                Image(systemName: delivery.confirmed ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                  .font(.system(size: 10))
-                  .foregroundStyle(delivery.confirmed ? .green : .orange)
-                Text("Last delivery: \(delivery.label)")
-                  .font(.system(size: 11, weight: .medium))
-                  .foregroundStyle(delivery.confirmed ? Color.green.opacity(0.8) : Color.orange.opacity(0.9))
-                  .lineLimit(2)
-              }
-            }
-
-            Text(model.codexPmStatus.summary)
-              .font(.system(size: 12))
-              .foregroundStyle(.white.opacity(0.82))
-              .lineLimit(3)
-          }
-        }
-        .frame(height: 240)
-
-        timelineCard
-      }
+      // One hero surface: the agents strip on top, an actionable approval
+      // banner when pending, and a single chronological feed merging the
+      // transcript with backend events (both carry ISO timestamps).
+      liveActivityCard
     }
     .padding(18)
+  }
+
+  /// Everything that happens, in one place: transcript, notifications,
+  /// approvals, agent deliveries. Transcript entries and backend events are
+  /// interleaved chronologically.
+  private var liveActivityCard: some View {
+    ControlCard(title: "Live Activity", icon: "list.bullet.rectangle") {
+      VStack(alignment: .leading, spacing: 10) {
+        agentsStrip
+
+        if model.activeTaskId != nil {
+          activeTaskStrip
+        }
+
+        approvalBanner
+
+        Rectangle()
+          .fill(Color.white.opacity(0.06))
+          .frame(height: 1)
+
+        ScrollViewReader { proxy in
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+              if activityFeed.isEmpty {
+                Text("Nothing yet — connect and start talking.")
+                  .font(.system(size: 13))
+                  .foregroundStyle(.secondary)
+                  .padding(.top, 8)
+              } else {
+                ForEach(activityFeed) { item in
+                  switch item {
+                  case .transcript(let entry):
+                    TranscriptRow(entry: entry)
+                      .id(item.id)
+                  case .event(let event):
+                    EventRow(event: event, summary: model.statusLine(for: event))
+                      .id(item.id)
+                  }
+                }
+              }
+            }
+            .padding(.vertical, 2)
+          }
+          .onChange(of: activityFeed.count) {
+            if let last = activityFeed.last {
+              withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(last.id, anchor: .bottom)
+              }
+            }
+          }
+        }
+        .frame(maxHeight: .infinity)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private enum ActivityItem: Identifiable {
+    case transcript(TranscriptEntry)
+    case event(BackendEvent)
+
+    var id: String {
+      switch self {
+      case .transcript(let entry): return "t-\(entry.id)"
+      case .event(let event): return "e-\(event.id)"
+      }
+    }
+
+    /// ISO-8601 timestamps sort correctly as plain strings.
+    var sortKey: String {
+      switch self {
+      case .transcript(let entry): return entry.timestamp
+      case .event(let event): return event.createdAt
+      }
+    }
+  }
+
+  private var activityFeed: [ActivityItem] {
+    (model.transcript.map(ActivityItem.transcript) + model.events.map(ActivityItem.event))
+      .sorted { $0.sortKey < $1.sortKey }
+  }
+
+  /// Agent status as a thin line instead of a full card: a colored dot per
+  /// agent (click = read its status aloud) plus the last-delivery badge.
+  private var agentsStrip: some View {
+    HStack(spacing: 14) {
+      if model.agentsStatus.isEmpty {
+        agentDot(
+          name: "Codex",
+          running: model.codexStatus.codexRunning,
+          installed: true,
+          action: { Task { await model.readAgentPmStatus("codex") } })
+      } else {
+        ForEach(model.agentsStatus) { agentRow in
+          agentDot(
+            name: agentRow.displayName,
+            running: agentRow.running,
+            installed: agentRow.installed,
+            action: { Task { await model.readAgentPmStatus(agentRow.agent) } })
+        }
+      }
+
+      if let delivery = model.lastDeliveryBadge {
+        HStack(spacing: 4) {
+          Image(systemName: delivery.confirmed ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+            .font(.system(size: 9))
+            .foregroundStyle(delivery.confirmed ? .green : .orange)
+          Text(delivery.label)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(delivery.confirmed ? Color.green.opacity(0.8) : Color.orange.opacity(0.9))
+            .lineLimit(1)
+        }
+      }
+
+      Spacer()
+
+      if !model.codexPmStatus.summary.isEmpty {
+        Text(model.codexPmStatus.summary)
+          .font(.system(size: 10))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .frame(maxWidth: 320, alignment: .trailing)
+      }
+    }
+  }
+
+  private func agentDot(name: String, running: Bool, installed: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 5) {
+        Circle()
+          .fill(running ? Color.green : (installed ? Color.orange : Color.secondary))
+          .frame(width: 7, height: 7)
+        Text(name)
+          .font(.system(size: 11, weight: .medium))
+          .foregroundStyle(.white.opacity(0.85))
+      }
+    }
+    .buttonStyle(.plain)
+    .disabled(!running)
+    .help(running ? "Read \(name) status" : "\(name) is not running")
+  }
+
+  private var activeTaskStrip: some View {
+    HStack(spacing: 8) {
+      ProgressView()
+        .controlSize(.small)
+      Text("Task \(shortId(model.activeTaskId)) running")
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.secondary)
+      Spacer()
+      Button {
+        Task { await model.cancelActiveTask() }
+      } label: {
+        Label("Stop Task", systemImage: "stop.fill")
+      }
+      .buttonStyle(ControlButtonStyle(kind: .danger))
+    }
+  }
+
+  /// Pending approvals surface at the top of the feed as an actionable
+  /// banner instead of living in their own card.
+  @ViewBuilder
+  private var approvalBanner: some View {
+    if let approval = model.pendingApproval {
+      approvalBannerBody(
+        title: approval.summary,
+        detail: approval.detail,
+        onReject: { Task { await model.rejectPending() } },
+        onApprove: { Task { await model.approvePending() } })
+    } else if let approval = model.pendingRealtimeApproval {
+      approvalBannerBody(
+        title: approval.title,
+        detail: approval.detail,
+        onReject: { Task { await model.rejectRealtimeApproval() } },
+        onApprove: { Task { await model.approveRealtimeApproval() } })
+    }
+  }
+
+  private func approvalBannerBody(
+    title: String,
+    detail: String?,
+    onReject: @escaping () -> Void,
+    onApprove: @escaping () -> Void
+  ) -> some View {
+    HStack(alignment: .center, spacing: 10) {
+      Image(systemName: "hand.raised.fill")
+        .font(.system(size: 13))
+        .foregroundStyle(.yellow)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+          .font(.system(size: 12, weight: .semibold))
+        if let detail, !detail.isEmpty {
+          Text(detail)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+        }
+      }
+      Spacer()
+      Button("Reject", action: onReject)
+        .buttonStyle(ControlButtonStyle(kind: .danger))
+      Button("Approve", action: onApprove)
+        .buttonStyle(ControlButtonStyle(kind: .primary))
+    }
+    .padding(10)
+    .background(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(Color.yellow.opacity(0.08))
+        .overlay(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(Color.yellow.opacity(0.35), lineWidth: 1)
+        )
+    )
   }
 
   private var localVoiceCard: some View {
@@ -409,119 +590,6 @@ private struct ControlCenterView: View {
       Text("\(label): \(ok ? okText : badText)")
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(ok ? .green.opacity(0.9) : .orange.opacity(0.9))
-    }
-  }
-
-  private var activeTaskCard: some View {
-    ControlCard(title: "Current Task", icon: "bolt.horizontal") {
-      VStack(alignment: .leading, spacing: 12) {
-        if let taskId = model.activeTaskId {
-          Text(shortId(taskId))
-            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.cyan)
-
-          Text(model.compactStatus)
-            .font(.system(size: 13))
-            .foregroundStyle(.white.opacity(0.82))
-            .lineLimit(4)
-
-          HStack(spacing: 8) {
-            Button {
-              Task { await model.cancelActiveTask() }
-            } label: {
-              Label("Stop Task", systemImage: "stop.fill")
-            }
-            .buttonStyle(ControlButtonStyle(kind: .danger))
-
-            Button {
-              Task { await model.disconnectVoice() }
-            } label: {
-              Label("Mute Voice", systemImage: "mic.slash")
-            }
-            .buttonStyle(ControlButtonStyle())
-          }
-        } else {
-          Text("No active task.")
-            .font(.system(size: 13))
-            .foregroundStyle(.secondary)
-          Text("Headless work runs through tools, code, MCP, and shell without taking over your mouse.")
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
-            .lineLimit(3)
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var approvalCard: some View {
-    ControlCard(title: "Approvals", icon: "hand.raised") {
-      VStack(alignment: .leading, spacing: 10) {
-        if let approval = model.pendingApproval {
-          Text(approval.summary)
-            .font(.system(size: 13, weight: .medium))
-          if let detail = approval.detail {
-            Text(detail)
-              .font(.system(size: 11))
-              .foregroundStyle(.secondary)
-              .lineLimit(4)
-          }
-          HStack {
-            Button("Reject") {
-              Task { await model.rejectPending() }
-            }
-            .buttonStyle(ControlButtonStyle(kind: .danger))
-            Button("Approve") {
-              Task { await model.approvePending() }
-            }
-            .buttonStyle(ControlButtonStyle(kind: .primary))
-          }
-        } else if let approval = model.pendingRealtimeApproval {
-          Text(approval.title)
-            .font(.system(size: 13, weight: .medium))
-          if let detail = approval.detail {
-            Text(detail)
-              .font(.system(size: 11))
-              .foregroundStyle(.secondary)
-              .lineLimit(4)
-          }
-          HStack {
-            Button("Reject") {
-              Task { await model.rejectRealtimeApproval() }
-            }
-            .buttonStyle(ControlButtonStyle(kind: .danger))
-            Button("Approve") {
-              Task { await model.approveRealtimeApproval() }
-            }
-            .buttonStyle(ControlButtonStyle(kind: .primary))
-          }
-        } else {
-          Text("No approvals pending.")
-            .font(.system(size: 13))
-            .foregroundStyle(.secondary)
-        }
-      }
-    }
-  }
-
-  private var timelineCard: some View {
-    ControlCard(title: "Live Activity", icon: "list.bullet.rectangle") {
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 10) {
-          if model.events.isEmpty {
-            Text("No backend events yet.")
-              .font(.system(size: 13))
-              .foregroundStyle(.secondary)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(.top, 8)
-          } else {
-            ForEach(model.events) { event in
-              EventRow(event: event, summary: model.statusLine(for: event))
-            }
-          }
-        }
-        .padding(.vertical, 2)
-      }
     }
   }
 

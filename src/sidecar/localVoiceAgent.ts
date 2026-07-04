@@ -2,6 +2,7 @@ import { APP_DISPLAY_NAME } from "../shared/samanthaConfig";
 import { pressKeysCombos } from "../shared/toolSchemas";
 import type { CodexCommandResult, CodexPmStatus, MemoryRecord, MemorySaveInput } from "../shared/types";
 import type { CodexBridge } from "./codexBridge";
+import { logger } from "./logger";
 
 /// v3 "local" voice provider: the Swift app does on-device STT/TTS and sends
 /// each user turn here as text. This module runs the agent loop against a
@@ -380,19 +381,32 @@ export class LocalVoiceAgent {
       ...this.history,
       { role: "user", content: userText }
     ];
+    // Everything appended past this point (tool-call rounds) belongs to this
+    // turn and must be persisted into history — see below.
+    const turnStart = messages.length;
 
     this.delegatedAgentThisTurn = undefined;
+    logger.info("local-voice turn start", { text: userText.slice(0, 140), language });
     let assistantReply = "";
+    let toolCallsThisTurn = 0;
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
         const message = onDelta ? await this.chatStreaming(messages, onDelta) : await this.chat(messages);
         if (message.tool_calls?.length && round < MAX_TOOL_ROUNDS) {
           messages.push(message);
+          toolCallsThisTurn += message.tool_calls.length;
           for (const call of message.tool_calls) {
             const result = await this.executeTool(call.function.name, call.function.arguments);
+            logger.info(`local-voice tool ${call.function.name}`, {
+              args: JSON.stringify(call.function.arguments).slice(0, 300),
+              result: JSON.stringify(result).slice(0, 300)
+            });
             messages.push({ role: "tool", content: JSON.stringify(result) });
           }
           continue;
+        }
+        if (round === MAX_TOOL_ROUNDS && message.tool_calls?.length) {
+          logger.warn("local-voice turn hit MAX_TOOL_ROUNDS with pending tool calls");
         }
         assistantReply = message.content?.trim() ?? "";
         break;
@@ -410,10 +424,27 @@ export class LocalVoiceAgent {
     if (!assistantReply) {
       assistantReply = language === "en" ? "Done." : "Listo.";
     }
+    logger.info("local-voice turn done", {
+      toolCalls: toolCallsThisTurn,
+      delegated: this.delegatedAgentThisTurn ?? "none",
+      replyChars: assistantReply.length
+    });
 
-    this.history.push({ role: "user", content: userText }, { role: "assistant", content: assistantReply });
+    // Persist the FULL turn — including tool-call rounds — not just the final
+    // sentences. If history only shows "dile a Codex X" → "Listo, lo escribí"
+    // with no tool call in between, the model learns that in-context pattern
+    // and starts claiming delegations without ever calling the tool.
+    this.history.push(
+      { role: "user", content: userText },
+      ...messages.slice(turnStart),
+      { role: "assistant", content: assistantReply }
+    );
     if (this.history.length > MAX_HISTORY_MESSAGES) {
       this.history = this.history.slice(-MAX_HISTORY_MESSAGES);
+      // Never start history mid-turn (e.g. with an orphan tool result).
+      while (this.history.length > 0 && this.history[0].role !== "user") {
+        this.history.shift();
+      }
     }
     return { ok: true, reply: assistantReply, delegatedAgent: this.delegatedAgentThisTurn };
   }
