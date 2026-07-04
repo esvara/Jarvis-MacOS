@@ -317,9 +317,21 @@ async function main() {
   );
   const inputBridge = new NativeComputerBridge();
   const codexBridge = new CodexBridge(settingsStore, inputBridge);
-  const localVoiceAgent = new LocalVoiceAgent(codexBridge, (url, searchQuery) =>
-    openUrlForUser(url, searchQuery, undefined)
-  );
+  const localVoiceAgent = new LocalVoiceAgent({
+    codexBridge,
+    openUrl: (url, searchQuery) => openUrlForUser(url, searchQuery, undefined),
+    openFile: (filePath, query) => openFileForUser(filePath, query, undefined),
+    readApp: (appName) => inputBridge.readApp(appName),
+    searchMemory: (query) => backendRuntime.memoryStore.search({ query }),
+    saveMemory: (input) => {
+      const policy = evaluateMemoryWrite(input);
+      if (policy.decision === "block") {
+        return { status: "blocked", reason: policy.reason };
+      }
+      backendRuntime.memoryStore.save({ ...input, tags: policy.normalizedTags }, policy.reason);
+      return { status: "saved", reason: policy.reason };
+    }
+  });
   const sseClients = new Set<ServerResponse>();
   const backendEventHistory: BackendTaskEvent[] = [];
 
@@ -580,9 +592,46 @@ async function main() {
         return;
       }
 
+      if (method === "POST" && pathname === "/local-voice/turn-stream") {
+        const input = await readJson<{ text?: string; language?: string }>(request);
+        const text = input.text?.trim();
+        if (!text) {
+          sendJson(response, 400, { ok: false, error: "text must not be empty" });
+          return;
+        }
+        // NDJSON: {"delta":"..."} lines while generating, one final line with
+        // the LocalTurnResult. Errors after headers are sent must be written
+        // into the stream — the global catch can no longer change the status.
+        response.writeHead(200, { "Content-Type": "application/x-ndjson" });
+        try {
+          const result = await localVoiceAgent.runTurn(text, input.language === "en" ? "en" : "es", (delta) => {
+            response.write(`${JSON.stringify({ delta })}\n`);
+          });
+          response.end(`${JSON.stringify({ done: true, ...result })}\n`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Local voice turn failed.";
+          response.end(`${JSON.stringify({ done: true, ok: false, reply: "", error: message })}\n`);
+        }
+        return;
+      }
+
       if (method === "POST" && pathname === "/local-voice/reset") {
         localVoiceAgent.reset();
         sendJson(response, 200, { ok: true });
+        return;
+      }
+
+      if (method === "GET" && pathname === "/local-voice/health") {
+        const ollamaUrl = process.env.JARVIS_OLLAMA_URL ?? "http://127.0.0.1:11434";
+        const model = process.env.JARVIS_LOCAL_MODEL ?? "qwen3:4b-instruct";
+        try {
+          const tags = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3_000) });
+          const data = (await tags.json()) as { models?: Array<{ name?: string }> };
+          const modelPulled = (data.models ?? []).some((entry) => entry.name === model || entry.name === `${model}:latest`);
+          sendJson(response, 200, { ok: true, running: true, model, modelPulled });
+        } catch {
+          sendJson(response, 200, { ok: true, running: false, model, modelPulled: false });
+        }
         return;
       }
 

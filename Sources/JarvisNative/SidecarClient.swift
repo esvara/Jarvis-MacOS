@@ -29,6 +29,73 @@ struct SidecarClient: Sendable {
     var ok: Bool
     var reply: String?
     var error: String?
+    var delegatedAgent: String?
+  }
+
+  struct LocalVoiceHealth: Codable {
+    var running: Bool
+    var model: String
+    var modelPulled: Bool
+  }
+
+  func localVoiceHealth() async throws -> LocalVoiceHealth {
+    try await request(path: "/local-voice/health", method: "GET")
+  }
+
+  private struct LocalVoiceStreamLine: Codable {
+    var delta: String?
+    var done: Bool?
+    var ok: Bool?
+    var reply: String?
+    var error: String?
+    var delegatedAgent: String?
+  }
+
+  /// Streaming variant of localVoiceTurn: NDJSON deltas invoke onDelta as the
+  /// model generates, and the final line resolves the returned result.
+  func localVoiceTurnStream(
+    text: String,
+    language: String,
+    onDelta: @escaping @Sendable (String) -> Void
+  ) async throws -> LocalVoiceTurnResult {
+    struct TurnBody: Codable {
+      var text: String
+      var language: String
+    }
+    guard let url = URL(string: "/local-voice/turn-stream", relativeTo: baseURL) else {
+      throw SidecarClientError.invalidResponse
+    }
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    applyAuth(to: &request)
+    request.timeoutInterval = 150
+    request.httpBody = try JSONEncoder().encode(TurnBody(text: text, language: language))
+
+    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+      throw SidecarClientError.invalidResponse
+    }
+
+    let decoder = JSONDecoder()
+    for try await line in bytes.lines {
+      guard let data = line.data(using: .utf8),
+            let parsed = try? decoder.decode(LocalVoiceStreamLine.self, from: data) else {
+        continue
+      }
+      if let delta = parsed.delta, !delta.isEmpty {
+        onDelta(delta)
+      }
+      if parsed.done == true {
+        return LocalVoiceTurnResult(
+          ok: parsed.ok ?? false,
+          reply: parsed.reply,
+          error: parsed.error,
+          delegatedAgent: parsed.delegatedAgent
+        )
+      }
+    }
+    throw SidecarClientError.invalidResponse
   }
 
   /// Local (Ollama) voice turn — the model may run several tool rounds, so
@@ -138,16 +205,17 @@ struct SidecarClient: Sendable {
     )
   }
 
-  func codexPmStatus(query: String? = nil, agent: String = "codex") async throws -> CodexPmStatus {
+  func codexPmStatus(query: String? = nil, agent: String = "codex", quiet: Bool = false) async throws -> CodexPmStatus {
     struct Payload: Codable {
       var query: String?
       var agent: String?
+      var quiet: Bool?
     }
 
     return try await request(
       path: "/codex/pm-status",
       method: "POST",
-      body: Payload(query: query, agent: agent)
+      body: Payload(query: query, agent: agent, quiet: quiet ? true : nil)
     )
   }
 

@@ -36,6 +36,8 @@ struct SettingsData: Codable {
   var voiceProvider: String?
   var hasXaiApiKey: Bool?
   var hasGeminiApiKey: Bool?
+  var grokVoice: String?
+  var geminiVoice: String?
   var hotkey: String
   var voice: String
   var voiceInputMode: String
@@ -53,6 +55,8 @@ struct SettingsData: Codable {
     voiceProvider: "openai",
     hasXaiApiKey: false,
     hasGeminiApiKey: false,
+    grokVoice: "rex",
+    geminiVoice: "Charon",
     hotkey: "Option+Space",
     voice: "cedar",
     voiceInputMode: "push_to_talk",
@@ -84,6 +88,8 @@ struct SettingsPatch: Codable {
   var voiceProvider: String?
   var xaiApiKey: String?
   var geminiApiKey: String?
+  var grokVoice: String?
+  var geminiVoice: String?
   var hotkey: String?
   var voice: String?
   var voiceInputMode: String?

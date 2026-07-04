@@ -24,6 +24,8 @@ export interface GeminiLiveCallbacks {
   onAssistantTranscript: (text: string) => void;
   onError: (message: string) => void;
   onClosed: (reason: string) => void;
+  /** Latest session-resumption handle; pass it to the next connect to keep context. */
+  onResumptionHandle?: (handle: string) => void;
 }
 
 export interface GeminiLiveConnectOptions {
@@ -34,6 +36,8 @@ export interface GeminiLiveConnectOptions {
   instructions: string;
   tools: GeminiToolDef[];
   callbacks: GeminiLiveCallbacks;
+  /** Resume a previous session's context after a disconnect (15-min limit). */
+  resumptionHandle?: string;
 }
 
 /** Gemini Live expects 16 kHz PCM input; the runtime captures at 24 kHz. */
@@ -146,7 +150,9 @@ export class GeminiLiveVoiceSession {
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         // Extends the otherwise ~15-minute audio session limit.
-        contextWindowCompression: { slidingWindow: {} }
+        contextWindowCompression: { slidingWindow: {} },
+        // Server sends resumption handles; reconnects keep the conversation.
+        sessionResumption: options.resumptionHandle ? { handle: options.resumptionHandle } : {}
       },
       callbacks: {
         onmessage: (message: LiveServerMessage) => {
@@ -217,6 +223,11 @@ export class GeminiLiveVoiceSession {
   }
 
   private handleMessage(message: LiveServerMessage): void {
+    const newHandle = message.sessionResumptionUpdate?.newHandle;
+    if (newHandle) {
+      this.callbacks.onResumptionHandle?.(newHandle);
+    }
+
     const content = message.serverContent;
 
     if (message.toolCall?.functionCalls?.length) {

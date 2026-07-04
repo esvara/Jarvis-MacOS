@@ -365,6 +365,23 @@ private struct StatusBarSettingsView: View {
             ) {
               Task { await model.saveXaiKey() }
             }
+
+            settingsMenuRow(
+              title: "Grok voice",
+              value: model.settings.grokVoice ?? "rex",
+              icon: "speaker.wave.2"
+            ) {
+              ForEach(Self.grokVoices, id: \.id) { voice in
+                Button {
+                  Task { await model.saveGrokVoice(voice.id) }
+                } label: {
+                  menuSelectionLabel(
+                    title: "\(voice.id) · \(voice.detail)",
+                    selected: (model.settings.grokVoice ?? "rex") == voice.id
+                  )
+                }
+              }
+            }
           }
 
           if (model.settings.voiceProvider ?? "openai") == "gemini" {
@@ -377,12 +394,49 @@ private struct StatusBarSettingsView: View {
             ) {
               Task { await model.saveGeminiKey() }
             }
+
+            settingsMenuRow(
+              title: "Gemini voice",
+              value: model.settings.geminiVoice ?? "Charon",
+              icon: "speaker.wave.2"
+            ) {
+              ForEach(Self.geminiVoices, id: \.id) { voice in
+                Button {
+                  Task { await model.saveGeminiVoice(voice.id) }
+                } label: {
+                  menuSelectionLabel(
+                    title: "\(voice.id) · \(voice.detail)",
+                    selected: (model.settings.geminiVoice ?? "Charon") == voice.id
+                  )
+                }
+              }
+            }
           }
 
           if (model.settings.voiceProvider ?? "openai") == "local" {
-            Text("Runs fully on-device: Apple speech recognition + Ollama + system voice. Requires Ollama running with qwen3:4b-instruct pulled. No API key, no cloud.")
+            Text("Runs fully on-device: Apple speech recognition + Ollama + system voice. No API key, no cloud.")
               .font(.system(size: 10))
               .foregroundStyle(.secondary)
+
+            if let health = model.localVoiceHealth {
+              Text(
+                health.running
+                  ? (health.modelPulled
+                    ? "Ollama running · \(health.model) ready"
+                    : "Ollama running · missing model — run: ollama pull \(health.model)")
+                  : "Ollama is not running — start it or reinstall from ollama.com"
+              )
+              .font(.system(size: 10))
+              .foregroundStyle(health.running && health.modelPulled ? .green.opacity(0.8) : .orange.opacity(0.9))
+            }
+
+            Button("Check status") {
+              Task { await model.refreshLocalVoiceHealth() }
+            }
+            .font(.system(size: 10, weight: .medium))
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .task { await model.refreshLocalVoiceHealth() }
           }
 
           Text("Voice reconnects with the new provider the next time you start listening.")
@@ -571,6 +625,28 @@ private struct StatusBarSettingsView: View {
   private func voiceName(for id: String) -> String {
     Self.realtimeVoices.first(where: { $0.id == id })?.name ?? id
   }
+
+  private struct ProviderVoice {
+    let id: String
+    let detail: String
+  }
+
+  private static let grokVoices: [ProviderVoice] = [
+    .init(id: "rex", detail: "male, confident"),
+    .init(id: "leo", detail: "male, authoritative"),
+    .init(id: "sal", detail: "neutral, smooth"),
+    .init(id: "eve", detail: "female, energetic"),
+    .init(id: "ara", detail: "female, warm")
+  ]
+
+  private static let geminiVoices: [ProviderVoice] = [
+    .init(id: "Charon", detail: "male, deep"),
+    .init(id: "Fenrir", detail: "male, intense"),
+    .init(id: "Orus", detail: "male, firm"),
+    .init(id: "Puck", detail: "male, upbeat"),
+    .init(id: "Kore", detail: "female, firm"),
+    .init(id: "Aoede", detail: "female, breezy")
+  ]
 
   private func providerDisplayName(_ provider: String) -> String {
     switch provider {

@@ -6,6 +6,8 @@ import {
   DEFAULT_BROWSER_CONTROL_MODE,
   DEFAULT_CODEX_BRIDGE_MODE,
   DEFAULT_ENABLE_OPENCLAW_BACKEND,
+  DEFAULT_GEMINI_VOICE,
+  DEFAULT_GROK_VOICE,
   DEFAULT_VOICE,
   DEFAULT_VOICE_INPUT_MODE,
   DEFAULT_VOICE_PROVIDER
@@ -18,6 +20,8 @@ export const defaultSettings: SettingsData = {
   voiceProvider: DEFAULT_VOICE_PROVIDER,
   hasXaiApiKey: false,
   hasGeminiApiKey: false,
+  grokVoice: DEFAULT_GROK_VOICE,
+  geminiVoice: DEFAULT_GEMINI_VOICE,
   hotkey: "Alt+Space",
   voice: DEFAULT_VOICE,
   voiceInputMode: DEFAULT_VOICE_INPUT_MODE,

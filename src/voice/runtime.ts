@@ -417,6 +417,10 @@ function emitTranscript(entries: TranscriptEntry[]) {
   });
 }
 
+/// Survives close(): reconnecting with the handle resumes the Gemini
+/// conversation past its ~15-minute per-connection limit.
+let geminiResumptionHandle: string | undefined;
+
 // Gemini Live delivers transcription as incremental fragments instead of a
 // full history snapshot; accumulate them into the same TranscriptEntry shape.
 let providerTranscriptEntries: TranscriptEntry[] = [];
@@ -1285,7 +1289,11 @@ async function connect(initialMuted = false) {
     });
 
     const providerVoice =
-      provider === "grok" ? DEFAULT_GROK_VOICE : provider === "gemini" ? DEFAULT_GEMINI_VOICE : currentSettings.voice;
+      provider === "grok"
+        ? currentSettings.grokVoice || DEFAULT_GROK_VOICE
+        : provider === "gemini"
+          ? currentSettings.geminiVoice || DEFAULT_GEMINI_VOICE
+          : currentSettings.voice;
 
     const seeScreenDirective =
       provider === "openai"
@@ -1382,7 +1390,11 @@ Use memory tools when the user shares stable preferences or defaults. Do not cla
         voice: providerVoice,
         instructions: agentInstructions,
         tools: geminiTools,
+        resumptionHandle: geminiResumptionHandle,
         callbacks: {
+          onResumptionHandle: (handle) => {
+            geminiResumptionHandle = handle;
+          },
           onAudioChunk: (pcm) => playAudioChunk(pcm16ToFloat32(pcm)),
           onAudioStart: () => {
             finalizeProviderTranscript("user");

@@ -203,6 +203,8 @@ export interface SettingsData {
   voiceProvider: VoiceProvider;
   hasXaiApiKey: boolean;
   hasGeminiApiKey: boolean;
+  grokVoice: string;
+  geminiVoice: string;
   hotkey: string;
   voice: string;
   voiceInputMode: VoiceInputMode;
@@ -241,6 +243,8 @@ export interface SettingsUpdate {
   voiceProvider?: VoiceProvider;
   xaiApiKey?: string;
   geminiApiKey?: string;
+  grokVoice?: string;
+  geminiVoice?: string;
   hotkey?: string;
   voice?: string;
   voiceInputMode?: VoiceInputMode;

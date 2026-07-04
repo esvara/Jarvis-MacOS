@@ -69,6 +69,7 @@ final class AppModel: ObservableObject {
   private let progressSpeaker = AVSpeechSynthesizer()
   private weak var voiceController: VoiceRuntimeControlling?
   private var localVoiceController: LocalVoiceController?
+  @Published var localVoiceHealth: SidecarClient.LocalVoiceHealth?
   private let nativeLogURL: URL = {
     let base = AppIdentity.logsDirectory()
     return base.appending(path: "native-overlay.log")
@@ -108,8 +109,28 @@ final class AppModel: ObservableObject {
       self.voiceState.phase = "idle"
       self.syncPhase()
     }
+    controller.onUserTranscript = { [weak self] text in
+      self?.appendLocalTranscript(role: "user", text: text)
+    }
+    controller.onAssistantReply = { [weak self] text in
+      self?.appendLocalTranscript(role: "assistant", text: text)
+    }
     localVoiceController = controller
     return controller
+  }
+
+  private func appendLocalTranscript(role: String, text: String) {
+    transcript.append(
+      TranscriptEntry(
+        id: UUID().uuidString,
+        role: role,
+        text: text,
+        timestamp: ISO8601DateFormatter().string(from: Date()),
+        agent: role == "assistant" ? "Jarvis" : nil
+      ))
+    if transcript.count > 200 {
+      transcript.removeFirst(transcript.count - 200)
+    }
   }
 
   func shutdown() {
@@ -242,10 +263,37 @@ final class AppModel: ObservableObject {
       settings = try await client.updateSettings(SettingsPatch(voiceProvider: provider))
       errorMessage = ""
       syncPhase()
+      if provider == "local" {
+        await refreshLocalVoiceHealth()
+      }
     } catch {
       errorMessage = error.localizedDescription
       syncPhase()
     }
+  }
+
+  func refreshLocalVoiceHealth() async {
+    localVoiceHealth = try? await client.localVoiceHealth()
+  }
+
+  func saveGrokVoice(_ voice: String) async {
+    do {
+      settings = try await client.updateSettings(SettingsPatch(grokVoice: voice))
+      errorMessage = ""
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+    syncPhase()
+  }
+
+  func saveGeminiVoice(_ voice: String) async {
+    do {
+      settings = try await client.updateSettings(SettingsPatch(geminiVoice: voice))
+      errorMessage = ""
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+    syncPhase()
   }
 
   func saveXaiKey() async {
