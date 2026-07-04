@@ -621,6 +621,29 @@ final class AppModel: ObservableObject {
       return
     }
 
+    // The local provider never uses the WKWebView realtime runtime: Connect
+    // just arms push-to-talk (or starts listening right away when unmuted).
+    if isLocalProvider {
+      errorMessage = ""
+      voiceRuntimeErrorMessage = ""
+      voiceState.connected = true
+      voiceState.muted = startMuted
+      voiceState.phase = startMuted ? "idle" : "listening"
+      listeningModeActive = !startMuted
+      localVoice.configure(language: assistantLanguage)
+      await refreshLocalVoiceHealth()
+      if let health = localVoiceHealth, !health.running || !health.modelPulled {
+        errorMessage = health.running
+          ? "Ollama is missing the model — run: ollama pull \(health.model)"
+          : "Ollama is not running. Start it or reinstall from ollama.com."
+      }
+      syncPhase()
+      if !startMuted {
+        await localVoice.startListening()
+      }
+      return
+    }
+
     if hasBlockingSetupIssue {
       errorMessage = permissions.voiceRuntimeSupported
         ? "Finish setup before starting voice."
@@ -685,7 +708,11 @@ final class AppModel: ObservableObject {
 
   func disconnectVoice() async {
     listeningModeActive = false
-    await voiceController?.close()
+    if isLocalProvider {
+      localVoiceController?.stop()
+    } else {
+      await voiceController?.close()
+    }
     resetVoiceState()
     voiceRuntimeErrorMessage = ""
     syncPhase()
@@ -733,6 +760,21 @@ final class AppModel: ObservableObject {
   }
 
   func toggleListeningFromSettings() async {
+    if isLocalProvider {
+      if !voiceState.connected {
+        await connectVoice(startMuted: false)
+        return
+      }
+      if voiceState.muted {
+        voiceState.muted = false
+        await startListening()
+      } else {
+        voiceState.muted = true
+        await stopListening()
+      }
+      syncPhase()
+      return
+    }
     if !voiceState.connected {
       await connectVoice(startMuted: false)
       return
