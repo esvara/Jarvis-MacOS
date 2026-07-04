@@ -241,6 +241,10 @@ private struct ControlCenterView: View {
           }
         }
 
+        if (model.settings.voiceProvider ?? "openai") == "local" {
+          localVoiceCard
+        }
+
         ControlCard(title: "Transcript", icon: "text.bubble") {
           ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
@@ -315,6 +319,97 @@ private struct ControlCenterView: View {
       }
     }
     .padding(18)
+  }
+
+  private var localVoiceCard: some View {
+    ControlCard(title: "Local Voice", icon: "cpu") {
+      VStack(alignment: .leading, spacing: 14) {
+        // Live model status: warming line, or ready badges.
+        if !model.localWarmupStatus.isEmpty {
+          HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(model.localWarmupStatus)
+              .font(.system(size: 12, weight: .medium))
+              .foregroundStyle(.yellow.opacity(0.9))
+          }
+        } else {
+          HStack(spacing: 10) {
+            statusPill(
+              label: "Model",
+              ok: model.localVoiceHealth?.running == true && model.localVoiceHealth?.modelPulled == true,
+              okText: "Qwen ready",
+              badText: model.localVoiceHealth?.running == false ? "Ollama off" : "no model")
+            if (model.settings.localSttEngine ?? "apple") == "parakeet" {
+              statusPill(label: "STT", ok: model.parakeetReady, okText: "Parakeet ready", badText: "loading…")
+            } else {
+              statusPill(label: "STT", ok: true, okText: "Apple ready", badText: "—")
+            }
+          }
+        }
+
+        localVoiceRow(title: "Speech engine") {
+          Picker("", selection: sttEngineBinding) {
+            Text("Apple Dictation").tag("apple")
+            Text("Parakeet v3").tag("parakeet")
+          }
+          .pickerStyle(.segmented)
+          .labelsHidden()
+          .frame(width: 220)
+        }
+
+        localVoiceRow(title: "Barge-in (talk over Jarvis)") {
+          Toggle("", isOn: bargeInBinding)
+            .labelsHidden()
+            .toggleStyle(.switch)
+        }
+
+        Text("Changes apply live. After switching the speech engine, Jarvis re-arms hands-free automatically once the model is warm.")
+          .font(.system(size: 10))
+          .foregroundStyle(.secondary)
+
+        Button {
+          Task { await model.warmLocalModels() }
+        } label: {
+          Label("Reload / warm models", systemImage: "arrow.clockwise")
+            .font(.system(size: 11, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.cyan.opacity(0.9))
+      }
+    }
+  }
+
+  private var sttEngineBinding: Binding<String> {
+    Binding(
+      get: { model.settings.localSttEngine ?? "apple" },
+      set: { engine in Task { await model.saveLocalSttEngine(engine) } })
+  }
+
+  private var bargeInBinding: Binding<Bool> {
+    Binding(
+      get: { model.settings.bargeInEnabled ?? true },
+      set: { on in Task { await model.saveBargeIn(on) } })
+  }
+
+  private func localVoiceRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+    HStack {
+      Text(title)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.white.opacity(0.85))
+      Spacer()
+      content()
+    }
+  }
+
+  private func statusPill(label: String, ok: Bool, okText: String, badText: String) -> some View {
+    HStack(spacing: 5) {
+      Circle()
+        .fill(ok ? Color.green : Color.orange)
+        .frame(width: 7, height: 7)
+      Text("\(label): \(ok ? okText : badText)")
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(ok ? .green.opacity(0.9) : .orange.opacity(0.9))
+    }
   }
 
   private var activeTaskCard: some View {

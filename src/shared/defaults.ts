@@ -23,6 +23,7 @@ export const defaultSettings: SettingsData = {
   grokVoice: DEFAULT_GROK_VOICE,
   geminiVoice: DEFAULT_GEMINI_VOICE,
   localSttEngine: "apple",
+  bargeInEnabled: true,
   hotkey: "Alt+Space",
   voice: DEFAULT_VOICE,
   voiceInputMode: DEFAULT_VOICE_INPUT_MODE,

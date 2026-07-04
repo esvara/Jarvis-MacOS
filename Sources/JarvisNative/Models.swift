@@ -39,6 +39,7 @@ struct SettingsData: Codable {
   var grokVoice: String?
   var geminiVoice: String?
   var localSttEngine: String?
+  var bargeInEnabled: Bool?
   var hotkey: String
   var voice: String
   var voiceInputMode: String
@@ -59,6 +60,7 @@ struct SettingsData: Codable {
     grokVoice: "rex",
     geminiVoice: "Charon",
     localSttEngine: "apple",
+    bargeInEnabled: true,
     hotkey: "Option+Space",
     voice: "cedar",
     voiceInputMode: "push_to_talk",
@@ -93,6 +95,7 @@ struct SettingsPatch: Codable {
   var grokVoice: String?
   var geminiVoice: String?
   var localSttEngine: String?
+  var bargeInEnabled: Bool?
   var hotkey: String?
   var voice: String?
   var voiceInputMode: String?

@@ -207,6 +207,8 @@ export interface SettingsData {
   geminiVoice: string;
   /** STT engine for the local provider: Apple dictation or the Parakeet server. */
   localSttEngine: "apple" | "parakeet";
+  /** Allow talking over Jarvis to interrupt it (hands-free mode). */
+  bargeInEnabled: boolean;
   hotkey: string;
   voice: string;
   voiceInputMode: VoiceInputMode;
@@ -248,6 +250,7 @@ export interface SettingsUpdate {
   grokVoice?: string;
   geminiVoice?: string;
   localSttEngine?: "apple" | "parakeet";
+  bargeInEnabled?: boolean;
   hotkey?: string;
   voice?: string;
   voiceInputMode?: VoiceInputMode;

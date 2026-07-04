@@ -55,9 +55,12 @@ final class LocalVoiceController: NSObject {
     synthesizer.delegate = self
   }
 
-  func configure(language: String, sttEngine: String = "apple") {
+  var bargeInEnabled = true
+
+  func configure(language: String, sttEngine: String = "apple", bargeIn: Bool = true) {
     self.language = language == "en" ? "en" : "es"
     self.sttEngine = sttEngine == "parakeet" ? "parakeet" : "apple"
+    self.bargeInEnabled = bargeIn
   }
 
   func startListening(continuous: Bool = false, interruptSpeech: Bool = true) async {
@@ -176,6 +179,15 @@ final class LocalVoiceController: NSObject {
     }
   }
 
+  /// Non-async convenience to re-arm hands-free from a sync context (settings
+  /// callbacks) without blocking; no-op if already capturing.
+  func startListeningIfIdle(continuous: Bool) {
+    guard !capturing else { return }
+    Task { @MainActor in
+      await self.startListening(continuous: continuous)
+    }
+  }
+
   func stopListeningAndRespond(endContinuous: Bool = false) async {
     guard capturing else { return }
     capturing = false
@@ -253,7 +265,7 @@ final class LocalVoiceController: NSObject {
         if result.delegatedAgent != nil {
           startAgentMonitor(result.delegatedAgent ?? "codex")
         }
-        if continuousMode {
+        if continuousMode && bargeInEnabled {
           // Resume capture while the reply plays so the user can barge in;
           // echo cancellation + the raised playback threshold keep Jarvis's
           // own voice from triggering it.

@@ -42,6 +42,18 @@ struct SidecarClient: Sendable {
     try await request(path: "/local-voice/health", method: "GET")
   }
 
+  /// Direct check of the Parakeet STT server's readiness (127.0.0.1:4821).
+  func parakeetReady() async -> Bool {
+    guard let url = URL(string: "http://127.0.0.1:4821/health") else { return false }
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 3
+    guard let (data, _) = try? await URLSession.shared.data(for: request) else { return false }
+    struct Reply: Codable {
+      var ready: Bool?
+    }
+    return (try? JSONDecoder().decode(Reply.self, from: data))?.ready ?? false
+  }
+
   struct LocalVoiceWarmupResult: Codable {
     var ok: Bool
     var error: String?

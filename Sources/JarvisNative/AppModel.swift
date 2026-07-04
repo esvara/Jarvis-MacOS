@@ -70,6 +70,10 @@ final class AppModel: ObservableObject {
   private weak var voiceController: VoiceRuntimeControlling?
   private var localVoiceController: LocalVoiceController?
   @Published var localVoiceHealth: SidecarClient.LocalVoiceHealth?
+  @Published var parakeetReady = false
+  /// Live readiness of the local models: "" when idle/ok, otherwise a
+  /// human-readable "loading…" line shown in the Local Voice card.
+  @Published var localWarmupStatus = ""
   private let nativeLogURL: URL = {
     let base = AppIdentity.logsDirectory()
     return base.appending(path: "native-overlay.log")
@@ -264,7 +268,8 @@ final class AppModel: ObservableObject {
       errorMessage = ""
       syncPhase()
       if provider == "local" {
-        await refreshLocalVoiceHealth()
+        applyLocalVoiceConfig()
+        await warmLocalModels()
       }
     } catch {
       errorMessage = error.localizedDescription
@@ -274,6 +279,38 @@ final class AppModel: ObservableObject {
 
   func refreshLocalVoiceHealth() async {
     localVoiceHealth = try? await client.localVoiceHealth()
+    parakeetReady = (try? await client.parakeetReady()) ?? false
+  }
+
+  /// Warms the local models (LLM into memory, Parakeet inference path) and
+  /// publishes a live status the Local Voice card renders. Safe to call on
+  /// connect and after any engine/provider switch.
+  func warmLocalModels() async {
+    let english = assistantLanguage == "en"
+    localWarmupStatus = english ? "Loading local model…" : "Cargando modelo local…"
+    async let llm: () = warmLocalLLM()
+    if (settings.localSttEngine ?? "apple") == "parakeet" {
+      LocalVoiceController.warmUpParakeet()
+      await waitForParakeet(english: english)
+    }
+    await llm
+    localWarmupStatus = ""
+    await refreshLocalVoiceHealth()
+  }
+
+  private func warmLocalLLM() async {
+    _ = try? await client.localVoiceWarmup()
+  }
+
+  private func waitForParakeet(english: Bool) async {
+    localWarmupStatus = english ? "Loading Parakeet speech model…" : "Cargando el modelo de voz Parakeet…"
+    for _ in 0 ..< 40 {  // up to ~40 s on first download
+      if (try? await client.parakeetReady()) == true {
+        parakeetReady = true
+        return
+      }
+      try? await Task.sleep(nanoseconds: 1_000_000_000)
+    }
   }
 
   func saveLocalSttEngine(_ engine: String) async {
@@ -281,23 +318,43 @@ final class AppModel: ObservableObject {
       settings = try await client.updateSettings(SettingsPatch(localSttEngine: engine))
       // Hot-switching mid-capture would leave the old engine's pipeline
       // half-running (no recognizer / stale accumulator) and go silent:
-      // stop cleanly and let the user re-arm with the mic button or hotkey.
+      // stop cleanly and re-arm hands-free once the engine is warm.
+      let wasListening = voiceState.connected && !voiceState.muted
       localVoiceController?.stop()
-      localVoiceController?.configure(
-        language: assistantLanguage,
-        sttEngine: settings.localSttEngine ?? "apple")
-      if voiceState.connected {
-        voiceState.muted = true
-        listeningModeActive = false
+      applyLocalVoiceConfig()
+      errorMessage = ""
+      syncPhase()
+      await warmLocalModels()
+      if wasListening {
+        // Seamless: resume listening automatically once warm.
+        voiceState.muted = false
+        listeningModeActive = true
+        localVoice.startListeningIfIdle(continuous: true)
       }
-      if engine == "parakeet" {
-        LocalVoiceController.warmUpParakeet()
-      }
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+    syncPhase()
+  }
+
+  func saveBargeIn(_ enabled: Bool) async {
+    do {
+      settings = try await client.updateSettings(SettingsPatch(bargeInEnabled: enabled))
+      applyLocalVoiceConfig()
       errorMessage = ""
     } catch {
       errorMessage = error.localizedDescription
     }
     syncPhase()
+  }
+
+  private func applyLocalVoiceConfig() {
+    // Uses the getter so the controller is created on first use (the connect
+    // and listening paths configure before starting capture).
+    localVoice.configure(
+      language: assistantLanguage,
+      sttEngine: settings.localSttEngine ?? "apple",
+      bargeIn: settings.bargeInEnabled ?? true)
   }
 
   func saveGrokVoice(_ voice: String) async {
@@ -661,22 +718,16 @@ final class AppModel: ObservableObject {
       voiceState.muted = startMuted
       voiceState.phase = startMuted ? "idle" : "listening"
       listeningModeActive = !startMuted
-      localVoice.configure(language: assistantLanguage, sttEngine: settings.localSttEngine ?? "apple")
-      // Warm both legs of the pipeline so the first turn answers fast: the
-      // LLM into Ollama's memory, and Parakeet's inference path when active.
-      Task { [weak self] in
-        _ = try? await self?.client.localVoiceWarmup()
-      }
-      if (settings.localSttEngine ?? "apple") == "parakeet" {
-        LocalVoiceController.warmUpParakeet()
-      }
-      await refreshLocalVoiceHealth()
+      applyLocalVoiceConfig()
       if let health = localVoiceHealth, !health.running || !health.modelPulled {
         errorMessage = health.running
           ? "Ollama is missing the model — run: ollama pull \(health.model)"
           : "Ollama is not running. Start it or reinstall from ollama.com."
       }
       syncPhase()
+      // Warm both legs of the pipeline (published status shown in the card),
+      // then start listening if unmuted — the first turn answers fast.
+      await warmLocalModels()
       if !startMuted {
         await localVoice.startListening(continuous: true)
       }
@@ -765,7 +816,7 @@ final class AppModel: ObservableObject {
       overlayVisible = true
       errorMessage = ""
       voiceRuntimeErrorMessage = ""
-      localVoice.configure(language: assistantLanguage, sttEngine: settings.localSttEngine ?? "apple")
+      applyLocalVoiceConfig()
       await localVoice.startListening()
       return
     }
@@ -809,7 +860,7 @@ final class AppModel: ObservableObject {
         // and listening resumes after the reply. Hotkey stays push-to-talk.
         voiceState.muted = false
         listeningModeActive = true
-        localVoice.configure(language: assistantLanguage, sttEngine: settings.localSttEngine ?? "apple")
+        applyLocalVoiceConfig()
         await localVoice.startListening(continuous: true)
       } else {
         voiceState.muted = true
