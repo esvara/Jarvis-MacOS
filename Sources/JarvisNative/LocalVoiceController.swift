@@ -271,7 +271,10 @@ final class LocalVoiceController: NSObject {
     stopAgentMonitor()
   }
 
-  private static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+  /// nonisolated: the TCC authorization callback arrives on a background
+  /// queue; a MainActor-isolated continuation closure would trip Swift 6's
+  /// executor check and crash the app right as the user accepts the prompt.
+  private nonisolated static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
     await withCheckedContinuation { continuation in
       SFSpeechRecognizer.requestAuthorization { status in
         continuation.resume(returning: status)
