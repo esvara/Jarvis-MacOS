@@ -84,7 +84,10 @@ final class LocalVoiceController: NSObject {
     let inputNode = audioEngine.inputNode
     let format = inputNode.outputFormat(forBus: 0)
     inputNode.removeTap(onBus: 0)
-    inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
+    // @Sendable: the tap fires on the audio realtime queue; a closure formed
+    // in this @MainActor context would otherwise inherit main-actor isolation
+    // and trip Swift 6's executor check (dispatch_assert_queue_fail).
+    inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in
       request.append(buffer)
     }
 
@@ -98,7 +101,9 @@ final class LocalVoiceController: NSObject {
 
     capturing = true
     onPhaseChange?("listening")
-    recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, _ in
+    // @Sendable for the same reason as the tap above: the recognizer invokes
+    // this on a background speech queue.
+    recognitionTask = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, _ in
       guard let result else { return }
       let text = result.bestTranscription.formattedString
       Task { @MainActor in
