@@ -137,7 +137,27 @@ final class InputActionRequestParserTests: XCTestCase {
 
     XCTAssertEqual(
       try InputActionRequestParser.parse(Data((headers + body).utf8)),
-      .ready(.agentSendPrompt("Summarize this project", app: "codex", authorization: "Bearer local")))
+      .ready(.agentSendPrompt(
+        AgentPromptBody(prompt: "Summarize this project", app: nil, newChat: nil, submit: nil),
+        app: "codex",
+        authorization: "Bearer local")))
+  }
+
+  func testAgentSubmitRequestParsesBody() throws {
+    let body = #"{"app":"claude"}"#
+    let headers = [
+      "POST /agent/submit HTTP/1.1",
+      "Host: localhost",
+      "Authorization: Bearer local",
+      "Content-Type: application/json",
+      "Content-Length: \(body.utf8.count)",
+      "",
+      ""
+    ].joined(separator: "\r\n")
+
+    XCTAssertEqual(
+      try InputActionRequestParser.parse(Data((headers + body).utf8)),
+      .ready(.agentSubmit(AgentSubmitBody(app: "claude"), authorization: "Bearer local")))
   }
 
   func testAgentSendPromptRequestParsesAppField() throws {
@@ -154,6 +174,9 @@ final class InputActionRequestParserTests: XCTestCase {
 
     XCTAssertEqual(
       try InputActionRequestParser.parse(Data((headers + body).utf8)),
-      .ready(.agentSendPrompt("Fix the build", app: "claude", authorization: "Bearer local")))
+      .ready(.agentSendPrompt(
+        AgentPromptBody(prompt: "Fix the build", app: "claude", newChat: nil, submit: nil),
+        app: "claude",
+        authorization: "Bearer local")))
   }
 }

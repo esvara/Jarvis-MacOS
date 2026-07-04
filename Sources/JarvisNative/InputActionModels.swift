@@ -10,7 +10,8 @@ enum InputActionRequest: Equatable {
   case resumeActions(authorization: String?)
   case agentStatus(app: String, authorization: String?)
   case agentRead(app: String, authorization: String?)
-  case agentSendPrompt(String, app: String, authorization: String?)
+  case agentSendPrompt(AgentPromptBody, app: String, authorization: String?)
+  case agentSubmit(AgentSubmitBody, authorization: String?)
   case appPaste(AppPasteBody, authorization: String?)
   case appClick(AppClickBody, authorization: String?)
   case appRead(app: String, authorization: String?)
@@ -19,6 +20,14 @@ enum InputActionRequest: Equatable {
 
 struct AgentPromptBody: Codable, Equatable {
   var prompt: String
+  var app: String?
+  /// Open a fresh conversation before typing. Default: continue the current chat.
+  var newChat: Bool?
+  /// Press Enter after typing. Default: leave the brief in the box unsent.
+  var submit: Bool?
+}
+
+struct AgentSubmitBody: Codable, Equatable {
   var app: String?
 }
 

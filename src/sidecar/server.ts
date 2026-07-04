@@ -651,6 +651,12 @@ async function main() {
         return;
       }
 
+      if (method === "POST" && pathname === "/agent/submit-prompt") {
+        const input = await readJson<{ agent?: string }>(request);
+        sendJson(response, 200, await codexBridge.submitPrompt(input.agent === "claude" ? "claude" : "codex"));
+        return;
+      }
+
       if (method === "POST" && pathname === "/codex/command") {
         const input = await readJson<CodexCommandRequest>(request);
         sendJson(response, 200, await codexBridge.command(input));

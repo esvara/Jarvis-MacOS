@@ -147,7 +147,13 @@ export class CodexBridge {
     const agentName = agent === "codex" ? "Codex" : "Claude";
 
     await this.nativeBridge.resumeActions();
-    const sendResult = await this.nativeBridge.sendAgentPrompt(command, agent);
+    // Default flow: type the brief into the CURRENT chat and leave it unsent;
+    // the user reviews it and confirms ("envíalo") before Enter is pressed.
+    const autoSend = request.autoSend === true;
+    const sendResult = await this.nativeBridge.sendAgentPrompt(command, agent, {
+      newChat: request.newChat === true,
+      submit: autoSend
+    });
     if (sendResult.ok && sendResult.handoff) {
       await this.writeInbox(config, request.intent, command);
       return await this.recordResult(
@@ -175,6 +181,20 @@ export class CodexBridge {
       `# Last Prompt Sent To Codex\n\n${command}\n\nSent: ${new Date().toISOString()}\n`,
       "utf8"
     );
+    if (!autoSend) {
+      return await this.recordResult(
+        "prepared",
+        `Jarvis typed the brief into ${agentName}'s prompt box. It has NOT been sent — awaiting the user's confirmation.`,
+        command,
+        {
+          needsUserApproval: true,
+          nextAction: `Say "envíalo" and Jarvis will press Enter in ${agentName}.`,
+          pmPrompt: command,
+          detail: sendResult.verified ? "delivery:typed-verified" : "delivery:typed-blind"
+        }
+      );
+    }
+
     const deliveryNote = sendResult.verified
       ? `Jarvis delivered the brief to ${agentName}'s prompt box and sent it.`
       : `Jarvis pasted the brief into ${agentName}'s prompt box and pressed Enter. ${agentName} no expone el contenido por Accessibility, así que vale la pena confirmar visualmente que el mensaje aparece como enviado.`;
@@ -183,6 +203,23 @@ export class CodexBridge {
       nextAction: `Jarvis can now read ${agentName} status and summarize progress.`,
       pmPrompt: command,
       detail: sendResult.verified ? "delivery:verified" : "delivery:blind"
+    });
+  }
+
+  /** Deferred send: presses Enter in the agent's chat box after the user confirmed. */
+  async submitPrompt(agent: "codex" | "claude" = "codex"): Promise<CodexCommandResult> {
+    const agentName = agent === "codex" ? "Codex" : "Claude";
+    await this.nativeBridge.resumeActions();
+    const result = await this.nativeBridge.submitAgentPrompt(agent);
+    if (!result.ok) {
+      return await this.recordResult("blocked", result.error ?? `${agentName} could not be controlled natively.`, "", {
+        needsUserApproval: true,
+        nextAction: `Open ${agentName} and press Enter manually.`
+      });
+    }
+    return await this.recordResult("sent", `Jarvis sent the pending brief in ${agentName}.`, "", {
+      needsUserApproval: false,
+      nextAction: `Jarvis can now read ${agentName} status and summarize progress.`
     });
   }
 

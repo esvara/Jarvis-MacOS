@@ -33,6 +33,8 @@ import {
   scrollToolParameters,
   parseScrollToolInput,
   forgetMemoryToolParameters,
+  sendAgentPromptToolParameters,
+  parseSendAgentPromptToolInput,
   parseCodexCommandToolInput,
   parseCodexStatusToolInput,
   parseForgetMemoryToolInput,
@@ -1068,18 +1070,34 @@ async function connect(initialMuted = false) {
     const delegateToAgentTool = tool({
       name: "delegate_to_agent",
       description:
-        "Deliver an execution brief to one of the local agent apps (Codex or Claude) by pasting it into the app's prompt box and sending it. Interpret the user's intent, craft a concise high-quality brief, and pick the agent the user named — default to Codex when unspecified.",
+        "Write an execution brief into a local agent app's prompt box (Codex or Claude) WITHOUT sending it — the user reviews and confirms before it is sent with send_agent_prompt. The brief must be your well-written interpretation of the user's intent, never their literal words. Types into the current chat; set newChat=true only when the user asks for a new conversation.",
       parameters: codexCommandToolParameters,
       execute: async (input) => {
         const normalizedInput = parseCodexCommandToolInput(input);
-        const result = await withToolPhase("acting", () =>
+        return withToolPhase("acting", () =>
           requestJson<CodexCommandResult>("/codex/command", {
             method: "POST",
             body: JSON.stringify(normalizedInput)
           })
         );
+      }
+    });
+
+    const sendAgentPromptTool = tool({
+      name: "send_agent_prompt",
+      description:
+        "Press Enter in the agent app to send the brief previously written with delegate_to_agent. Call it ONLY after the user confirms ('envíalo', 'send it').",
+      parameters: sendAgentPromptToolParameters,
+      execute: async (input) => {
+        const { agent } = parseSendAgentPromptToolInput(input);
+        const result = await withToolPhase("acting", () =>
+          requestJson<CodexCommandResult>("/agent/submit-prompt", {
+            method: "POST",
+            body: JSON.stringify({ agent })
+          })
+        );
         if (result.status === "sent") {
-          startAgentMonitor(normalizedInput.agent ?? "codex");
+          startAgentMonitor(agent);
         }
         return result;
       }
@@ -1313,9 +1331,9 @@ YOUR ROLE — you are a meta-controller for two local agent apps. You never oper
 HOW TO DELEGATE:
 1. Listen to the user's request and infer the real goal. Ask only what is essential.
 2. Pick the agent: if the user names one ("dile a Claude...", "que Codex haga..."), use that one; otherwise use codex.
-3. Briefly acknowledge out loud what you are about to delegate and to whom.
-4. Call delegate_to_agent with the chosen agent and a clean, natural prompt in the user's language saying exactly what the user asked for — plus only the context or constraints the user actually gave. The text lands verbatim in the agent's chat box and the user reads it, so NO template sections, NO headings like "Entregable", "Definition of Done" or "Execution guidance", NO response-format requirements. Write it like a well-phrased message a person would type. Never paste a raw transcript.
-5. The bridge activates the app's window, pastes the brief into its prompt box, and sends it.
+3. INTERPRET the intent and craft a clean, well-phrased brief in the user's language — never their literal words or a transcript. NO template sections, NO headings like "Entregable" or "Definition of Done"; write it like a well-phrased message a person would type.
+4. Call delegate_to_agent — it TYPES the brief into the agent's CURRENT chat and does NOT send it. Set newChat=true only if the user asked for a new conversation.
+5. Tell the user the brief is written and waiting; when they confirm ("envíalo", "mándalo", "send it"), call send_agent_prompt with the same agent. Only then is it sent.
 
 MONITORING:
 - After you deliver a brief, an automatic monitor polls that agent every 30 seconds for up to 30 minutes. When it detects completion, a blocker, or a needed approval, you receive a message tagged "[Monitor automático de agentes]" — it comes from the system, NOT from the user. Relay it in one short natural sentence (e.g. "Señor, Codex terminó la tarea." / "Claude necesita una aprobación.").
@@ -1349,6 +1367,7 @@ Use memory tools when the user shares stable preferences or defaults. Do not cla
       saveMemoryTool,
       forgetMemoryTool,
       delegateToAgentTool,
+      sendAgentPromptTool,
       getAgentStatusTool,
       pasteIntoAppTool,
       clickInAppTool,

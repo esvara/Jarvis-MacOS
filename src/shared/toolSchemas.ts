@@ -164,6 +164,9 @@ export const codexCommandToolParameters = strictObject({
     type: ["string", "null"],
     enum: ["codex", "claude", null]
   },
+  newChat: {
+    type: ["boolean", "null"]
+  },
   modeHint: {
     type: ["string", "null"],
     enum: ["observe", "assist", "drive", null]
@@ -179,6 +182,7 @@ const codexCommandToolInputSchema = z.object({
   intent: z.string().min(3),
   command: z.string().min(3),
   agent: agentAppSchema.nullish(),
+  newChat: z.boolean().nullish(),
   modeHint: codexBridgeModeSchema.nullable(),
   requireConfirmation: z.boolean().nullable()
 });
@@ -189,9 +193,26 @@ export function parseCodexCommandToolInput(input: unknown): CodexCommandRequest 
     intent: parsed.intent,
     command: parsed.command,
     agent: parsed.agent ?? undefined,
+    newChat: parsed.newChat ?? undefined,
     modeHint: (parsed.modeHint ?? undefined) as CodexBridgeMode | undefined,
     requireConfirmation: parsed.requireConfirmation ?? undefined
   };
+}
+
+export const sendAgentPromptToolParameters = strictObject({
+  agent: {
+    type: ["string", "null"],
+    enum: ["codex", "claude", null]
+  }
+});
+
+const sendAgentPromptToolInputSchema = z.object({
+  agent: agentAppSchema.nullish()
+});
+
+export function parseSendAgentPromptToolInput(input: unknown): { agent: "codex" | "claude" } {
+  const parsed = sendAgentPromptToolInputSchema.parse(input);
+  return { agent: parsed.agent ?? "codex" };
 }
 
 export const pasteIntoAppToolParameters = strictObject({

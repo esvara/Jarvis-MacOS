@@ -333,7 +333,48 @@ final class InputActionServer: @unchecked Sendable {
             ]))
         }
       }
-    case .agentSendPrompt(let prompt, let appKey, let authorization):
+    case .agentSubmit(let body, let authorization):
+      guard isAuthorized(authorization) else {
+        sendResponse(
+          connection: connection,
+          status: 401,
+          body: responseJSON(ok: false, error: "Unauthorized"))
+        return
+      }
+      Task { @MainActor [weak self] in
+        guard let self else {
+          connection.cancel()
+          return
+        }
+        guard !self.actionsBlocked else {
+          self.sendResponse(
+            connection: connection,
+            status: 409,
+            body: self.responseJSON(ok: false, error: "Input actions are paused by Stop All."))
+          return
+        }
+        guard let target = AgentAppTarget(rawValue: (body.app ?? "codex").lowercased()) else {
+          self.sendResponse(
+            connection: connection,
+            status: 400,
+            body: self.responseJSON(ok: false, error: "Unknown agent app '\(body.app ?? "")'"))
+          return
+        }
+        do {
+          try await self.submitAgentPrompt(target)
+          self.sendResponse(
+            connection: connection,
+            status: 200,
+            body: self.responseJSON(ok: true, extra: ["submitted": true]))
+        } catch {
+          self.sendResponse(
+            connection: connection,
+            status: 500,
+            body: self.responseJSON(ok: false, error: error.localizedDescription))
+        }
+      }
+    case .agentSendPrompt(let promptBody, let appKey, let authorization):
+      let prompt = promptBody.prompt
       guard isAuthorized(authorization) else {
         sendResponse(
           connection: connection,
@@ -375,13 +416,18 @@ final class InputActionServer: @unchecked Sendable {
         }
 
         do {
-          let outcome = try await self.deliverPrompt(prompt, to: target)
+          let outcome = try await self.deliverPrompt(
+            prompt,
+            to: target,
+            openNewChat: promptBody.newChat ?? false,
+            submit: promptBody.submit ?? false)
           self.sendResponse(
             connection: connection,
             status: 200,
             body: self.responseJSON(ok: true, extra: [
               "verified": outcome == .verified,
-              "handoff": outcome == .handoff
+              "handoff": outcome == .handoff,
+              "submitted": promptBody.submit ?? false
             ]))
         } catch {
           self.sendResponse(
@@ -642,7 +688,12 @@ final class InputActionServer: @unchecked Sendable {
   @MainActor
   // Returns the outcome per request; shared "last delivery" state would let
   // concurrent deliveries report each other's result.
-  private func deliverPrompt(_ prompt: String, to target: AgentAppTarget) async throws -> DeliveryOutcome {
+  private func deliverPrompt(
+    _ prompt: String,
+    to target: AgentAppTarget,
+    openNewChat: Bool = false,
+    submit: Bool = false
+  ) async throws -> DeliveryOutcome {
     let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
       throw InputActionError.invalidField("\(target.displayName) prompt must not be empty")
@@ -666,9 +717,37 @@ final class InputActionServer: @unchecked Sendable {
       trimmed,
       into: app,
       displayName: target.displayName,
-      submit: true,
+      submit: submit,
       requireTextInput: false,
-      openNewChat: true)
+      openNewChat: openNewChat)
+  }
+
+  /// Presses Enter in the agent app's chat box — the deferred "send" step
+  /// after a brief was typed with submit=false and the user confirmed it.
+  @MainActor
+  private func submitAgentPrompt(_ target: AgentAppTarget) async throws {
+    guard let app = findAgentApplication(target) else {
+      throw InputActionError.invalidField("\(target.displayName) is not running")
+    }
+    app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+    var waited = 0
+    while NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier,
+          waited < 5_000 {
+      try await Task.sleep(for: .milliseconds(200))
+      waited += 200
+    }
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
+      throw InputActionError.invalidField("\(target.displayName) did not come to the foreground")
+    }
+    try await Task.sleep(for: .milliseconds(400))
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    _ = focusTextInput(in: axApp)
+    try await Task.sleep(for: .milliseconds(200))
+    try executor.execute(InputAction(
+      type: .keypress, x: nil, y: nil, button: nil, text: nil, keys: ["return"],
+      combo: nil, scrollX: nil, scrollY: nil,
+      fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
   }
 
   /// Open (if needed) an arbitrary app by display name and paste text into its

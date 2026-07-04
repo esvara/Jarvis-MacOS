@@ -283,6 +283,10 @@ export interface CodexStatus {
 }
 
 export interface CodexCommandRequest {
+  /** Open a fresh conversation before typing. Default: continue the current chat. */
+  newChat?: boolean;
+  /** Press Enter after typing. Default: leave the brief unsent for user review. */
+  autoSend?: boolean;
   intent: string;
   command: string;
   agent?: AgentApp;

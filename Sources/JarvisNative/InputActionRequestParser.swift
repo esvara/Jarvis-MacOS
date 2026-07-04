@@ -59,9 +59,17 @@ struct InputActionRequestParser {
         throw InputActionRequestParserError.invalidJSON
       }
       return .ready(.agentSendPrompt(
-        payload.prompt,
+        payload,
         app: payload.app ?? "codex",
         authorization: headers["authorization"]))
+    case ("POST", "/agent/submit"):
+      guard let body = try bodyData(from: data, separatorRange: separatorRange, headers: headers) else {
+        return .incomplete
+      }
+      guard let payload = try? JSONDecoder().decode(AgentSubmitBody.self, from: body) else {
+        throw InputActionRequestParserError.invalidJSON
+      }
+      return .ready(.agentSubmit(payload, authorization: headers["authorization"]))
     case ("POST", "/app/paste"):
       guard let body = try bodyData(from: data, separatorRange: separatorRange, headers: headers) else {
         return .incomplete

@@ -55,14 +55,29 @@ const localTools = [
     function: {
       name: "delegate_to_agent",
       description:
-        "Deliver a task brief to a local agent app (Codex or Claude) by pasting it into the app's chat box and sending it. Use for any real work: coding, writing, analysis.",
+        "Write a task brief into a local agent app's chat box (Codex or Claude) WITHOUT sending it — the user reviews it and confirms before it is sent with send_agent_prompt. The prompt must be YOUR well-written interpretation of what the user wants, never a transcript of their words. Types into the current chat unless newChat is true.",
       parameters: {
         type: "object",
         properties: {
           agent: { type: "string", enum: ["codex", "claude"], description: "Target agent app; default codex." },
-          prompt: { type: "string", description: "The brief, written naturally in the user's language." }
+          prompt: { type: "string", description: "A clear, well-phrased brief in the user's language, rewritten from their intent." },
+          newChat: { type: "boolean", description: "Open a fresh conversation first. Only when the user asks for a new chat. Default false." }
         },
         required: ["prompt"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_agent_prompt",
+      description: "Press Enter in the agent app to send the brief that was previously written with delegate_to_agent. Call it ONLY when the user confirms (e.g. 'envíalo', 'mándalo', 'send it').",
+      parameters: {
+        type: "object",
+        properties: {
+          agent: { type: "string", enum: ["codex", "claude"], description: "Agent whose pending brief to send; default codex." }
+        },
+        required: []
       }
     }
   },
@@ -246,10 +261,12 @@ function systemPrompt(language: string): string {
 Current date and time: ${nowLine} (${Intl.DateTimeFormat().resolvedOptions().timeZone}).
 Your replies are spoken aloud: keep them to one or two short sentences, no markdown, no lists.
 You are a meta-controller for two local agent apps: "codex" (default) and "claude". You never do the work yourself — delegate real tasks with delegate_to_agent, check progress with get_agent_status, open web pages with open_url, open files with open_file, and read app windows with read_app.
-DELEGATION PHRASES — when the user says "dile a Codex ...", "pídele a Claude ...", "que Codex haga ...", "mándale a Claude ...", "tell Codex ...", or simply names Codex or Claude with a task, that ALWAYS means calling delegate_to_agent with that agent and the task as a clean natural prompt. Examples:
-- "Dile a Codex que revise el proyecto" → delegate_to_agent(agent: "codex", prompt: "Revisa el proyecto")
-- "Pídele a Claude que resuma el informe de ventas" → delegate_to_agent(agent: "claude", prompt: "Resume el informe de ventas")
-Never answer such requests yourself, never just read the instruction back, and never ask which agent when the user already named one.
+DELEGATION PHRASES — when the user says "dile a Codex ...", "pídele a Claude ...", "que Codex haga ...", "mándale a Claude ...", "tell Codex ...", or simply names Codex or Claude with a task, that ALWAYS means calling delegate_to_agent with that agent. Never answer such requests yourself, never just read the instruction back, and never ask which agent when the user already named one.
+DELEGATION FLOW:
+1. INTERPRET the user's intent and WRITE a clear, well-phrased brief — never their literal words. Example: "dile a Codex que le eche un ojo al proyecto a ver si hay algo raro" → delegate_to_agent(agent: "codex", prompt: "Revisa el proyecto y reporta cualquier problema o anomalía que encuentres").
+2. delegate_to_agent only TYPES the brief into the agent's current chat — it does not send it. Tell the user it is written and awaiting their confirmation.
+3. When the user confirms ("envíalo", "mándalo", "dale", "send it"), call send_agent_prompt with the same agent.
+4. Open a new conversation (newChat: true) ONLY if the user explicitly asks for a new chat.
 LIGHT DESKTOP ACTIONS — for simple things do them directly: quit_app to close an app (confirm first if it may have unsaved work), paste_text_into_app to put text into Notes/TextEdit/etc., click_in_app to press a visible button by its label, press_keys for safe shortcuts. Anything complex still goes to the agents.
 Use web_search to answer questions about current events or facts you are unsure of; summarize the results in one or two spoken sentences and mention the source briefly.
 A delegation only counts as delivered when the tool returns status "sent"; otherwise say exactly what failed. Never claim an agent finished without evidence from get_agent_status.
@@ -465,9 +482,16 @@ export class LocalVoiceAgent {
         const result: CodexCommandResult = await this.deps.codexBridge.command({
           intent: prompt.slice(0, 80),
           command: prompt,
-          agent
+          agent,
+          newChat: args.newChat === true
         });
+        return result;
+      }
+      if (name === "send_agent_prompt") {
+        const agent = args.agent === "claude" ? "claude" : "codex";
+        const result = await this.deps.codexBridge.submitPrompt(agent);
         if (result.status === "sent") {
+          // The brief is now actually running; start announcing its progress.
           this.delegatedAgentThisTurn = agent;
         }
         return result;
