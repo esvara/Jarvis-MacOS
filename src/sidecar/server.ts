@@ -322,6 +322,22 @@ async function main() {
     openUrl: (url, searchQuery) => openUrlForUser(url, searchQuery, undefined),
     openFile: (filePath, query) => openFileForUser(filePath, query, undefined),
     readApp: (appName) => inputBridge.readApp(appName),
+    quitApp: async (appName) => {
+      await inputBridge.resumeActions();
+      return inputBridge.quitApp(appName);
+    },
+    pasteIntoApp: async (appName, text, submit) => {
+      await inputBridge.resumeActions();
+      return inputBridge.pasteIntoApp(appName, text, submit);
+    },
+    clickInApp: async (appName, label) => {
+      await inputBridge.resumeActions();
+      return inputBridge.clickInApp(appName, label);
+    },
+    pressKeys: async (keys) => {
+      await inputBridge.resumeActions();
+      await inputBridge.keypress(keys);
+    },
     searchMemory: (query) => backendRuntime.memoryStore.search({ query }),
     saveMemory: (input) => {
       const policy = evaluateMemoryWrite(input);

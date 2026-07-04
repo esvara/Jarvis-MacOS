@@ -1,4 +1,5 @@
 import { APP_DISPLAY_NAME } from "../shared/samanthaConfig";
+import { pressKeysCombos } from "../shared/toolSchemas";
 import type { CodexCommandResult, CodexPmStatus, MemoryRecord, MemorySaveInput } from "../shared/types";
 import type { CodexBridge } from "./codexBridge";
 
@@ -21,6 +22,10 @@ export interface LocalVoiceAgentDeps {
   openUrl: (url?: string, searchQuery?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
   openFile: (path?: string, query?: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
   readApp: (appName: string) => Promise<unknown>;
+  quitApp: (appName: string) => Promise<unknown>;
+  pasteIntoApp: (appName: string, text: string, submit: boolean) => Promise<unknown>;
+  clickInApp: (appName: string, label: string) => Promise<unknown>;
+  pressKeys: (keys: string[]) => Promise<void>;
   searchMemory: (query: string) => MemoryRecord[];
   saveMemory: (input: MemorySaveInput) => { status: string; reason?: string };
 }
@@ -137,6 +142,66 @@ const localTools = [
   {
     type: "function",
     function: {
+      name: "quit_app",
+      description: "Quit a running macOS app gracefully (same as Cmd+Q) by name. Confirm with the user first if the app may have unsaved work.",
+      parameters: {
+        type: "object",
+        properties: {
+          appName: { type: "string", description: "App name, e.g. Calculator, Notes, Safari." }
+        },
+        required: ["appName"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "paste_text_into_app",
+      description:
+        "Open (or activate) a macOS app by name and paste the given text into its focused text field. Set submit=true only for chat-style apps where Enter sends.",
+      parameters: {
+        type: "object",
+        properties: {
+          appName: { type: "string", description: "App name, e.g. Notes, TextEdit." },
+          text: { type: "string", description: "Text to paste." },
+          submit: { type: "boolean", description: "Press Enter after pasting. Default false." }
+        },
+        required: ["appName", "text"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "click_in_app",
+      description: "Click a button, link, or menu item in a running app by its visible label (case-insensitive, partial match).",
+      parameters: {
+        type: "object",
+        properties: {
+          appName: { type: "string", description: "App name." },
+          label: { type: "string", description: "Visible label of the button/link, e.g. 'Guardar', 'Open'." }
+        },
+        required: ["appName", "label"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "press_keys",
+      description: "Press a safe keyboard shortcut in the frontmost app. Never use it to bypass a confirmation the user has not given.",
+      parameters: {
+        type: "object",
+        properties: {
+          combo: { type: "string", enum: [...pressKeysCombos], description: "The shortcut to press." }
+        },
+        required: ["combo"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "web_search",
       description:
         "Search the web and get the top results (title, URL, snippet). Use it to answer questions about current events, facts you are unsure about, or anything the user asks to look up.",
@@ -181,6 +246,11 @@ function systemPrompt(language: string): string {
 Current date and time: ${nowLine} (${Intl.DateTimeFormat().resolvedOptions().timeZone}).
 Your replies are spoken aloud: keep them to one or two short sentences, no markdown, no lists.
 You are a meta-controller for two local agent apps: "codex" (default) and "claude". You never do the work yourself — delegate real tasks with delegate_to_agent, check progress with get_agent_status, open web pages with open_url, open files with open_file, and read app windows with read_app.
+DELEGATION PHRASES — when the user says "dile a Codex ...", "pídele a Claude ...", "que Codex haga ...", "mándale a Claude ...", "tell Codex ...", or simply names Codex or Claude with a task, that ALWAYS means calling delegate_to_agent with that agent and the task as a clean natural prompt. Examples:
+- "Dile a Codex que revise el proyecto" → delegate_to_agent(agent: "codex", prompt: "Revisa el proyecto")
+- "Pídele a Claude que resuma el informe de ventas" → delegate_to_agent(agent: "claude", prompt: "Resume el informe de ventas")
+Never answer such requests yourself, never just read the instruction back, and never ask which agent when the user already named one.
+LIGHT DESKTOP ACTIONS — for simple things do them directly: quit_app to close an app (confirm first if it may have unsaved work), paste_text_into_app to put text into Notes/TextEdit/etc., click_in_app to press a visible button by its label, press_keys for safe shortcuts. Anything complex still goes to the agents.
 Use web_search to answer questions about current events or facts you are unsure of; summarize the results in one or two spoken sentences and mention the source briefly.
 A delegation only counts as delivered when the tool returns status "sent"; otherwise say exactly what failed. Never claim an agent finished without evidence from get_agent_status.
 Use memory tools when the user shares stable preferences or asks what you remember.`;
@@ -425,6 +495,37 @@ export class LocalVoiceAgent {
           return { ok: false, error: "appName must not be empty" };
         }
         return await this.deps.readApp(appName);
+      }
+      if (name === "quit_app") {
+        const appName = typeof args.appName === "string" ? args.appName.trim() : "";
+        if (!appName) {
+          return { ok: false, error: "appName must not be empty" };
+        }
+        return await this.deps.quitApp(appName);
+      }
+      if (name === "paste_text_into_app") {
+        const appName = typeof args.appName === "string" ? args.appName.trim() : "";
+        const pasteText = typeof args.text === "string" ? args.text : "";
+        if (!appName || !pasteText) {
+          return { ok: false, error: "appName and text are required" };
+        }
+        return await this.deps.pasteIntoApp(appName, pasteText, args.submit === true);
+      }
+      if (name === "click_in_app") {
+        const appName = typeof args.appName === "string" ? args.appName.trim() : "";
+        const label = typeof args.label === "string" ? args.label.trim() : "";
+        if (!appName || !label) {
+          return { ok: false, error: "appName and label are required" };
+        }
+        return await this.deps.clickInApp(appName, label);
+      }
+      if (name === "press_keys") {
+        const combo = typeof args.combo === "string" ? args.combo : "";
+        if (!(pressKeysCombos as readonly string[]).includes(combo)) {
+          return { ok: false, error: `combo must be one of: ${pressKeysCombos.join(", ")}` };
+        }
+        await this.deps.pressKeys(combo.split(","));
+        return { ok: true, pressed: combo };
       }
       if (name === "web_search") {
         const query = typeof args.query === "string" ? args.query.trim() : "";
