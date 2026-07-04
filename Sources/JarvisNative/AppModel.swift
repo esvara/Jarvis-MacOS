@@ -621,6 +621,13 @@ final class AppModel: ObservableObject {
       return
     }
 
+    // Right after launch `settings` can still be the empty placeholder
+    // (provider "openai"); deciding the connect path on stale data sent
+    // local-provider connects into the web runtime. Refresh first.
+    if let freshSettings = try? await client.settings() {
+      settings = freshSettings
+    }
+
     // The local provider never uses the WKWebView realtime runtime: Connect
     // just arms push-to-talk (or starts listening right away when unmuted).
     if isLocalProvider {
