@@ -253,7 +253,8 @@ final class LocalVoiceController: NSObject {
     } else {
       recognitionRequest?.endAudio()
       // Give the recognizer a moment to finalize the tail of the utterance.
-      try? await Task.sleep(nanoseconds: 400_000_000)
+      // (The 1.2 s silence window already covered most of the tail.)
+      try? await Task.sleep(nanoseconds: 250_000_000)
       recognitionTask?.cancel()
       recognitionTask = nil
       recognitionRequest = nil
@@ -501,7 +502,7 @@ final class LocalVoiceController: NSObject {
           return
         }
 
-        if snapshot.speechDetected, Date().timeIntervalSince(snapshot.lastSpeechAt) > 1.6 {
+        if snapshot.speechDetected, Date().timeIntervalSince(snapshot.lastSpeechAt) > 1.2 {
           await self.stopListeningAndRespond()
         }
       }
