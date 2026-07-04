@@ -631,6 +631,11 @@ async function main() {
         return;
       }
 
+      if (method === "POST" && pathname === "/local-voice/warmup") {
+        sendJson(response, 200, await localVoiceAgent.warmup());
+        return;
+      }
+
       if (method === "POST" && pathname === "/local-voice/reset") {
         localVoiceAgent.reset();
         sendJson(response, 200, { ok: true });

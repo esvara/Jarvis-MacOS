@@ -343,6 +343,29 @@ export class LocalVoiceAgent {
   }
 
   /**
+   * Loads the model into Ollama's memory (1-token generation) so the first
+   * real turn doesn't pay the multi-second cold-start. Fire-and-forget.
+   */
+  async warmup(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: DEFAULT_LOCAL_MODEL,
+          prompt: "ok",
+          stream: false,
+          options: { num_predict: 1 }
+        }),
+        signal: AbortSignal.timeout(60_000)
+      });
+      return { ok: response.ok };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
    * Runs one voice turn. When onDelta is provided, assistant text is
    * forwarded incrementally so the app can start speaking the first
    * sentence while the model is still generating.

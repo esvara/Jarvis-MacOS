@@ -42,6 +42,27 @@ struct SidecarClient: Sendable {
     try await request(path: "/local-voice/health", method: "GET")
   }
 
+  struct LocalVoiceWarmupResult: Codable {
+    var ok: Bool
+    var error: String?
+  }
+
+  /// Loads the local LLM into memory; slow when cold, so generous timeout.
+  func localVoiceWarmup() async throws -> LocalVoiceWarmupResult {
+    struct Empty: Codable {}
+    guard let url = URL(string: "/local-voice/warmup", relativeTo: baseURL) else {
+      throw SidecarClientError.invalidResponse
+    }
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    applyAuth(to: &request)
+    request.timeoutInterval = 70
+    request.httpBody = try JSONEncoder().encode(Empty())
+    let (data, response) = try await URLSession.shared.data(for: request)
+    return try decodeResponse(data: data, response: response)
+  }
+
   private struct LocalVoiceStreamLine: Codable {
     var delta: String?
     var done: Bool?

@@ -279,9 +279,20 @@ final class AppModel: ObservableObject {
   func saveLocalSttEngine(_ engine: String) async {
     do {
       settings = try await client.updateSettings(SettingsPatch(localSttEngine: engine))
+      // Hot-switching mid-capture would leave the old engine's pipeline
+      // half-running (no recognizer / stale accumulator) and go silent:
+      // stop cleanly and let the user re-arm with the mic button or hotkey.
+      localVoiceController?.stop()
       localVoiceController?.configure(
         language: assistantLanguage,
         sttEngine: settings.localSttEngine ?? "apple")
+      if voiceState.connected {
+        voiceState.muted = true
+        listeningModeActive = false
+      }
+      if engine == "parakeet" {
+        LocalVoiceController.warmUpParakeet()
+      }
       errorMessage = ""
     } catch {
       errorMessage = error.localizedDescription
@@ -651,6 +662,14 @@ final class AppModel: ObservableObject {
       voiceState.phase = startMuted ? "idle" : "listening"
       listeningModeActive = !startMuted
       localVoice.configure(language: assistantLanguage, sttEngine: settings.localSttEngine ?? "apple")
+      // Warm both legs of the pipeline so the first turn answers fast: the
+      // LLM into Ollama's memory, and Parakeet's inference path when active.
+      Task { [weak self] in
+        _ = try? await self?.client.localVoiceWarmup()
+      }
+      if (settings.localSttEngine ?? "apple") == "parakeet" {
+        LocalVoiceController.warmUpParakeet()
+      }
       await refreshLocalVoiceHealth()
       if let health = localVoiceHealth, !health.running || !health.modelPulled {
         errorMessage = health.running

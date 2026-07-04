@@ -455,6 +455,35 @@ final class LocalVoiceController: NSObject {
   /// nonisolated: the TCC authorization callback arrives on a background
   /// queue; a MainActor-isolated continuation closure would trip Swift 6's
   /// executor check and crash the app right as the user accepts the prompt.
+  /// Fire-and-forget warm-up so the first real utterance doesn't pay any
+  /// cold-start cost: a short silent clip exercises the whole Parakeet path.
+  nonisolated static func warmUpParakeet() {
+    Task.detached(priority: .background) {
+      var silence = Data(capacity: 44 + 6400)
+      func appendLE(_ value: UInt32) {
+        withUnsafeBytes(of: value.littleEndian) { silence.append(contentsOf: $0) }
+      }
+      func appendLE16(_ value: UInt16) {
+        withUnsafeBytes(of: value.littleEndian) { silence.append(contentsOf: $0) }
+      }
+      silence.append(contentsOf: Array("RIFF".utf8))
+      appendLE(36 + 6400)
+      silence.append(contentsOf: Array("WAVE".utf8))
+      silence.append(contentsOf: Array("fmt ".utf8))
+      appendLE(16)
+      appendLE16(1)
+      appendLE16(1)
+      appendLE(16_000)
+      appendLE(32_000)
+      appendLE16(2)
+      appendLE16(16)
+      silence.append(contentsOf: Array("data".utf8))
+      appendLE(6400)
+      silence.append(Data(count: 6400))
+      _ = try? await transcribeWithParakeet(silence)
+    }
+  }
+
   /// Sends a 16 kHz mono WAV to the local Parakeet server and returns the text.
   private nonisolated static func transcribeWithParakeet(_ wav: Data) async throws -> String {
     var request = URLRequest(url: parakeetURL)
@@ -600,7 +629,9 @@ private final class MicLevelBox: @unchecked Sendable {
 
   func note(rms: Float) {
     lock.lock()
-    let threshold: Float = playbackMode ? 0.05 : 0.015
+    // Voice-processing (echo cancellation) noticeably lowers input gain, so
+    // these thresholds are calibrated for the processed signal.
+    let threshold: Float = playbackMode ? 0.035 : 0.008
     if rms > threshold {
       speech = true
       lastSpeech = Date()
