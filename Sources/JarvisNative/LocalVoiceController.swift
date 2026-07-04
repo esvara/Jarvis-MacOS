@@ -28,6 +28,12 @@ final class LocalVoiceController: NSObject {
   private var pendingUtterances = 0
   private var streamFinished = true
 
+  // Continuous (hands-free) mode: auto-commit after trailing silence and
+  // resume listening once the reply finishes. Push-to-talk keeps this off.
+  private var continuousMode = false
+  private var silenceTimer: Timer?
+  private let micLevel = MicLevelBox()
+
   // Post-delegation monitor state
   private var monitorTimer: Timer?
   private var monitorAgent: String?
@@ -45,8 +51,9 @@ final class LocalVoiceController: NSObject {
     self.language = language == "en" ? "en" : "es"
   }
 
-  func startListening() async {
+  func startListening(continuous: Bool = false) async {
     guard !capturing else { return }
+    continuousMode = continuous
 
     let status = await Self.requestSpeechAuthorization()
     guard status == .authorized else {
@@ -87,8 +94,11 @@ final class LocalVoiceController: NSObject {
     // @Sendable: the tap fires on the audio realtime queue; a closure formed
     // in this @MainActor context would otherwise inherit main-actor isolation
     // and trip Swift 6's executor check (dispatch_assert_queue_fail).
+    let micLevel = self.micLevel
+    micLevel.reset()
     inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in
       request.append(buffer)
+      micLevel.note(rms: Self.bufferRms(buffer))
     }
 
     do {
@@ -101,6 +111,9 @@ final class LocalVoiceController: NSObject {
 
     capturing = true
     onPhaseChange?("listening")
+    if continuousMode {
+      startSilenceWatch()
+    }
     // @Sendable for the same reason as the tap above: the recognizer invokes
     // this on a background speech queue.
     recognitionTask = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, _ in
@@ -112,9 +125,13 @@ final class LocalVoiceController: NSObject {
     }
   }
 
-  func stopListeningAndRespond() async {
+  func stopListeningAndRespond(endContinuous: Bool = false) async {
     guard capturing else { return }
     capturing = false
+    if endContinuous {
+      continuousMode = false
+    }
+    stopSilenceWatch()
 
     audioEngine.stop()
     audioEngine.inputNode.removeTap(onBus: 0)
@@ -127,7 +144,16 @@ final class LocalVoiceController: NSObject {
 
     let text = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
-      onPhaseChange?("idle")
+      if continuousMode {
+        // Nothing was said; keep the hands-free conversation open.
+        await startListening(continuous: true)
+      } else {
+        onError?(
+          language == "en"
+            ? "I didn't catch anything — check the input microphone."
+            : "No escuché nada — revisa el micrófono de entrada.")
+        onPhaseChange?("idle")
+      }
       return
     }
 
@@ -150,11 +176,13 @@ final class LocalVoiceController: NSObject {
         }
         settleIfDone()
       } else {
+        continuousMode = false
         onError?(result.error ?? "The local voice agent returned no reply.")
         onPhaseChange?("idle")
       }
     } catch {
       streamFinished = true
+      continuousMode = false
       onError?(error.localizedDescription)
       onPhaseChange?("idle")
     }
@@ -162,6 +190,8 @@ final class LocalVoiceController: NSObject {
 
   func stop() {
     stopAgentMonitor()
+    stopSilenceWatch()
+    continuousMode = false
     if capturing {
       capturing = false
       audioEngine.stop()
@@ -211,9 +241,46 @@ final class LocalVoiceController: NSObject {
   }
 
   private func settleIfDone() {
-    if streamFinished && pendingUtterances == 0 {
+    guard streamFinished, pendingUtterances == 0 else { return }
+    if continuousMode && !capturing {
+      // Hands-free conversation: resume listening after the reply finishes.
+      Task { @MainActor in
+        await self.startListening(continuous: true)
+      }
+    } else {
       onPhaseChange?("idle")
     }
+  }
+
+  // MARK: - Silence auto-commit (hands-free mode)
+
+  /// After the user has spoken, ~1.6 s of trailing silence ends the turn
+  /// automatically — the button behaves like a conversation, not a walkie.
+  private func startSilenceWatch() {
+    stopSilenceWatch()
+    silenceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+      Task { @MainActor in
+        guard let self, self.capturing, self.continuousMode else { return }
+        let snapshot = self.micLevel.snapshot()
+        if snapshot.speechDetected, Date().timeIntervalSince(snapshot.lastSpeechAt) > 1.6 {
+          await self.stopListeningAndRespond()
+        }
+      }
+    }
+  }
+
+  private func stopSilenceWatch() {
+    silenceTimer?.invalidate()
+    silenceTimer = nil
+  }
+
+  private nonisolated static func bufferRms(_ buffer: AVAudioPCMBuffer) -> Float {
+    guard let data = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 0 }
+    var sum: Float = 0
+    for i in 0 ..< Int(buffer.frameLength) {
+      sum += data[i] * data[i]
+    }
+    return (sum / Float(buffer.frameLength)).squareRoot()
   }
 
   // MARK: - Post-delegation monitor
@@ -285,6 +352,35 @@ final class LocalVoiceController: NSObject {
         continuation.resume(returning: status)
       }
     }
+  }
+}
+
+/// Thread-safe mic level tracker shared between the realtime audio tap and
+/// the MainActor silence watcher.
+private final class MicLevelBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var speech = false
+  private var lastSpeech = Date.distantPast
+
+  func reset() {
+    lock.lock()
+    speech = false
+    lastSpeech = .distantPast
+    lock.unlock()
+  }
+
+  func note(rms: Float) {
+    guard rms > 0.015 else { return }
+    lock.lock()
+    speech = true
+    lastSpeech = Date()
+    lock.unlock()
+  }
+
+  func snapshot() -> (speechDetected: Bool, lastSpeechAt: Date) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (speech, lastSpeech)
   }
 }
 

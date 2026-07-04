@@ -639,7 +639,7 @@ final class AppModel: ObservableObject {
       }
       syncPhase()
       if !startMuted {
-        await localVoice.startListening()
+        await localVoice.startListening(continuous: true)
       }
       return
     }
@@ -766,11 +766,16 @@ final class AppModel: ObservableObject {
         return
       }
       if voiceState.muted {
+        // Button = hands-free conversation: silence auto-commits each turn
+        // and listening resumes after the reply. Hotkey stays push-to-talk.
         voiceState.muted = false
-        await startListening()
+        listeningModeActive = true
+        localVoice.configure(language: assistantLanguage)
+        await localVoice.startListening(continuous: true)
       } else {
         voiceState.muted = true
-        await stopListening()
+        listeningModeActive = false
+        await localVoice.stopListeningAndRespond(endContinuous: true)
       }
       syncPhase()
       return
