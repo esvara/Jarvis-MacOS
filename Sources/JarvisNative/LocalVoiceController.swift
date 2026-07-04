@@ -20,6 +20,7 @@ final class LocalVoiceController: NSObject {
   private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
   private var recognitionTask: SFSpeechRecognitionTask?
   private var latestTranscript = ""
+  private var recognitionErrorMessage = ""
   private var capturing = false
   private var language = "es"
 
@@ -87,9 +88,20 @@ final class LocalVoiceController: NSObject {
     }
     recognitionRequest = request
     latestTranscript = ""
+    recognitionErrorMessage = ""
+    NSLog(
+      "LocalVoice: startListening locale=%@ onDevice=%d continuous=%d",
+      locale.identifier, recognizer.supportsOnDeviceRecognition ? 1 : 0, continuous ? 1 : 0)
 
     let inputNode = audioEngine.inputNode
     let format = inputNode.outputFormat(forBus: 0)
+    guard format.sampleRate > 0 else {
+      onError?(
+        language == "en"
+          ? "No audio input device is available."
+          : "No hay un dispositivo de entrada de audio disponible.")
+      return
+    }
     inputNode.removeTap(onBus: 0)
     // @Sendable: the tap fires on the audio realtime queue; a closure formed
     // in this @MainActor context would otherwise inherit main-actor isolation
@@ -116,7 +128,18 @@ final class LocalVoiceController: NSObject {
     }
     // @Sendable for the same reason as the tap above: the recognizer invokes
     // this on a background speech queue.
-    recognitionTask = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, _ in
+    recognitionTask = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
+      if let error {
+        let message = error.localizedDescription
+        Task { @MainActor in
+          guard let self else { return }
+          // "Canceled"/216 arrive on every normal teardown; keep real failures.
+          if !message.localizedCaseInsensitiveContains("cancel") {
+            self.recognitionErrorMessage = message
+            NSLog("LocalVoice: recognition error: %@", message)
+          }
+        }
+      }
       guard let result else { return }
       let text = result.bestTranscription.formattedString
       Task { @MainActor in
@@ -144,16 +167,32 @@ final class LocalVoiceController: NSObject {
 
     let text = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
-      if continuousMode {
-        // Nothing was said; keep the hands-free conversation open.
+      let mic = micLevel.snapshot()
+      NSLog(
+        "LocalVoice: empty transcript. speechDetected=%d recognitionError=%@",
+        mic.speechDetected ? 1 : 0, recognitionErrorMessage)
+      if continuousMode && recognitionErrorMessage.isEmpty && !mic.speechDetected {
+        // True silence; keep the hands-free conversation open.
         await startListening(continuous: true)
-      } else {
-        onError?(
-          language == "en"
-            ? "I didn't catch anything — check the input microphone."
-            : "No escuché nada — revisa el micrófono de entrada.")
-        onPhaseChange?("idle")
+        return
       }
+      continuousMode = false
+      let detail: String
+      if !recognitionErrorMessage.isEmpty {
+        detail = language == "en"
+          ? "Speech recognition failed: \(recognitionErrorMessage) If Spanish dictation is not downloaded, enable it in System Settings > Keyboard > Dictation."
+          : "El reconocimiento de voz falló: \(recognitionErrorMessage) Si el dictado en español no está descargado, actívalo en Ajustes del Sistema > Teclado > Dictado."
+      } else if mic.speechDetected {
+        detail = language == "en"
+          ? "The microphone captured audio but no words were recognized. Try again closer to the mic."
+          : "El micrófono captó audio pero no se reconocieron palabras. Intenta de nuevo más cerca del micrófono."
+      } else {
+        detail = language == "en"
+          ? "The microphone captured no audio — check the input device and volume."
+          : "El micrófono no captó audio — revisa el dispositivo de entrada y su volumen."
+      }
+      onError?(detail)
+      onPhaseChange?("idle")
       return
     }
 

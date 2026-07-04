@@ -137,6 +137,21 @@ const localTools = [
   {
     type: "function",
     function: {
+      name: "web_search",
+      description:
+        "Search the web and get the top results (title, URL, snippet). Use it to answer questions about current events, facts you are unsure about, or anything the user asks to look up.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "The search query." }
+        },
+        required: ["query"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "save_memory",
       description: "Save a stable user preference or fact to durable memory. Only for information worth remembering across sessions.",
       parameters: {
@@ -156,11 +171,63 @@ function systemPrompt(language: string): string {
     language === "en"
       ? "Reply in English unless the user speaks Spanish."
       : "Responde en español salvo que el usuario hable en inglés.";
+  // Give the model a clock: date/time questions should not need a tool round.
+  const now = new Date();
+  const nowLine = now.toLocaleString(language === "en" ? "en-US" : "es-ES", {
+    dateStyle: "full",
+    timeStyle: "short"
+  });
   return `You are ${APP_DISPLAY_NAME}, a composed, precise voice assistant running fully locally. ${langLine}
+Current date and time: ${nowLine} (${Intl.DateTimeFormat().resolvedOptions().timeZone}).
 Your replies are spoken aloud: keep them to one or two short sentences, no markdown, no lists.
 You are a meta-controller for two local agent apps: "codex" (default) and "claude". You never do the work yourself — delegate real tasks with delegate_to_agent, check progress with get_agent_status, open web pages with open_url, open files with open_file, and read app windows with read_app.
+Use web_search to answer questions about current events or facts you are unsure of; summarize the results in one or two spoken sentences and mention the source briefly.
 A delegation only counts as delivered when the tool returns status "sent"; otherwise say exactly what failed. Never claim an agent finished without evidence from get_agent_status.
 Use memory tools when the user shares stable preferences or asks what you remember.`;
+}
+
+/// Zero-cost web search: DuckDuckGo's lite HTML endpoint, no API key. Results
+/// are parsed with a tolerant regex — good enough for a spoken summary.
+async function duckDuckGoSearch(query: string): Promise<{ results: Array<{ title: string; url: string; snippet: string }> }> {
+  const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh) JarvisLocal/1.0" },
+    signal: AbortSignal.timeout(10_000)
+  });
+  if (!response.ok) {
+    throw new Error(`Search failed (HTTP ${response.status}).`);
+  }
+  const html = await response.text();
+  const results: Array<{ title: string; url: string; snippet: string }> = [];
+  const linkPattern = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const snippetPattern = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+  const snippets = [...html.matchAll(snippetPattern)].map((match) => stripTags(match[1] ?? ""));
+  let index = 0;
+  for (const match of html.matchAll(linkPattern)) {
+    let url = match[1] ?? "";
+    // DDG wraps results as //duckduckgo.com/l/?uddg=<encoded>
+    const wrapped = url.match(/uddg=([^&]+)/);
+    if (wrapped?.[1]) {
+      url = decodeURIComponent(wrapped[1]);
+    }
+    results.push({ title: stripTags(match[2] ?? ""), url, snippet: snippets[index] ?? "" });
+    index += 1;
+    if (results.length >= 5) {
+      break;
+    }
+  }
+  return { results };
+}
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export class LocalVoiceAgent {
@@ -358,6 +425,13 @@ export class LocalVoiceAgent {
           return { ok: false, error: "appName must not be empty" };
         }
         return await this.deps.readApp(appName);
+      }
+      if (name === "web_search") {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        if (!query) {
+          return { ok: false, error: "query must not be empty" };
+        }
+        return await duckDuckGoSearch(query);
       }
       if (name === "search_memory") {
         const query = typeof args.query === "string" ? args.query : "";
