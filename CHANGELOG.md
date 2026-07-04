@@ -6,7 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **Delegation flow (all providers)**: briefs are the assistant's interpretation of the user's intent (never a transcript), they are typed into the agent's **current** chat (new chat only on request), and they are **not sent** until the user confirms — a new `send_agent_prompt` tool presses Enter, and the progress monitor starts at the actual send.
+
 ### Added
+- **Local provider capabilities**: hands-free conversation mode on the mic button (silence auto-commits the turn and listening resumes after the reply; the hotkey remains push-to-talk), current date/time in every turn, `web_search` (DuckDuckGo, no key), and light desktop actions (`quit_app`, `paste_text_into_app`, `click_in_app`, `press_keys`) plus natural delegation phrasing ("dile a Codex…"). Ollama keep-alive documented via LaunchAgent.
 - **Local provider upgrades**: replies stream sentence-by-sentence to speech while the model is still generating; what you said and what Jarvis replied now appear in the transcript; a proactive monitor announces when a delegated agent finishes, gets blocked, or needs approval; the settings popover shows live Ollama status (running/model pulled); and the local agent gained open_file, read_app, search_memory, and save_memory tools.
 - **Cloud provider upgrades**: Gemini Live sessions resume across reconnects (session-resumption handles survive the ~15-minute connection limit), and Grok/Gemini voices are now selectable in the settings popover (rex, leo, sal… / Charon, Fenrir, Orus…).
 - **Local voice provider (v3)**: a fourth provider, "Local (Ollama)", runs the whole voice loop on-device with zero cloud cost — Apple `SFSpeechRecognizer` for on-device speech-to-text (es/en), a local Ollama model (default `qwen3:4b-instruct`, override with `JARVIS_LOCAL_MODEL`) with function calling for the agent loop, and `AVSpeechSynthesizer` for the reply. Push-to-talk only. Tools: delegate to Codex/Claude, agent status, open URL. Requires Ollama running; a clear installation hint is spoken/shown otherwise. Adds the Speech Recognition permission.
