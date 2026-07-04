@@ -333,6 +333,46 @@ final class InputActionServer: @unchecked Sendable {
             ]))
         }
       }
+    case .agentDiscard(let body, let authorization):
+      guard isAuthorized(authorization) else {
+        sendResponse(
+          connection: connection,
+          status: 401,
+          body: responseJSON(ok: false, error: "Unauthorized"))
+        return
+      }
+      Task { @MainActor [weak self] in
+        guard let self else {
+          connection.cancel()
+          return
+        }
+        guard !self.actionsBlocked else {
+          self.sendResponse(
+            connection: connection,
+            status: 409,
+            body: self.responseJSON(ok: false, error: "Input actions are paused by Stop All."))
+          return
+        }
+        guard let target = AgentAppTarget(rawValue: (body.app ?? "codex").lowercased()) else {
+          self.sendResponse(
+            connection: connection,
+            status: 400,
+            body: self.responseJSON(ok: false, error: "Unknown agent app '\(body.app ?? "")'"))
+          return
+        }
+        do {
+          try await self.discardAgentPrompt(target)
+          self.sendResponse(
+            connection: connection,
+            status: 200,
+            body: self.responseJSON(ok: true, extra: ["discarded": true]))
+        } catch {
+          self.sendResponse(
+            connection: connection,
+            status: 500,
+            body: self.responseJSON(ok: false, error: error.localizedDescription))
+        }
+      }
     case .agentSubmit(let body, let authorization):
       guard isAuthorized(authorization) else {
         sendResponse(
@@ -719,7 +759,41 @@ final class InputActionServer: @unchecked Sendable {
       displayName: target.displayName,
       submit: submit,
       requireTextInput: false,
-      openNewChat: openNewChat)
+      openNewChat: openNewChat,
+      replaceExisting: true)
+  }
+
+  /// Clears the agent's chat box (select-all + delete) — discards a brief
+  /// that was typed but not sent.
+  @MainActor
+  private func discardAgentPrompt(_ target: AgentAppTarget) async throws {
+    guard let app = findAgentApplication(target) else {
+      throw InputActionError.invalidField("\(target.displayName) is not running")
+    }
+    app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+    var waited = 0
+    while NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier,
+          waited < 5_000 {
+      try await Task.sleep(for: .milliseconds(200))
+      waited += 200
+    }
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
+      throw InputActionError.invalidField("\(target.displayName) did not come to the foreground")
+    }
+    try await Task.sleep(for: .milliseconds(400))
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    _ = focusTextInput(in: axApp)
+    try await Task.sleep(for: .milliseconds(200))
+    try executor.execute(InputAction(
+      type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
+      combo: "cmd,a", scrollX: nil, scrollY: nil,
+      fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
+    try await Task.sleep(for: .milliseconds(150))
+    try executor.execute(InputAction(
+      type: .keypress, x: nil, y: nil, button: nil, text: nil, keys: ["delete"],
+      combo: nil, scrollX: nil, scrollY: nil,
+      fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
   }
 
   /// Presses Enter in the agent app's chat box — the deferred "send" step
@@ -914,7 +988,8 @@ final class InputActionServer: @unchecked Sendable {
     displayName: String,
     submit: Bool,
     requireTextInput: Bool,
-    openNewChat: Bool = false
+    openNewChat: Bool = false,
+    replaceExisting: Bool = false
   ) async throws -> DeliveryOutcome {
     app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
 
@@ -968,6 +1043,16 @@ final class InputActionServer: @unchecked Sendable {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(text, forType: .string)
+
+    if replaceExisting {
+      // A rewritten brief must REPLACE whatever is already typed in the box
+      // (e.g. the previous unsent brief), not append after it.
+      try executor.execute(InputAction(
+        type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
+        combo: "cmd,a", scrollX: nil, scrollY: nil,
+        fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
+      try await Task.sleep(for: .milliseconds(150))
+    }
 
     try executor.execute(InputAction(
       type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,

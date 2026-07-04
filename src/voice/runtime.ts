@@ -1083,6 +1083,22 @@ async function connect(initialMuted = false) {
       }
     });
 
+    const discardAgentPromptTool = tool({
+      name: "discard_agent_prompt",
+      description:
+        "Clear the agent's chat box, discarding a brief that was written but not sent. Use when the user cancels ('olvídalo', 'bórralo', 'never mind').",
+      parameters: sendAgentPromptToolParameters,
+      execute: async (input) => {
+        const { agent } = parseSendAgentPromptToolInput(input);
+        return withToolPhase("acting", () =>
+          requestJson<CodexCommandResult>("/agent/discard-prompt", {
+            method: "POST",
+            body: JSON.stringify({ agent })
+          })
+        );
+      }
+    });
+
     const sendAgentPromptTool = tool({
       name: "send_agent_prompt",
       description:
@@ -1334,6 +1350,7 @@ HOW TO DELEGATE:
 3. INTERPRET the intent and craft a clean, well-phrased brief in the user's language — never their literal words or a transcript. NO template sections, NO headings like "Entregable" or "Definition of Done"; write it like a well-phrased message a person would type.
 4. Call delegate_to_agent — it TYPES the brief into the agent's CURRENT chat and does NOT send it. Set newChat=true only if the user asked for a new conversation.
 5. Tell the user the brief is written and waiting; when they confirm ("envíalo", "mándalo", "send it"), call send_agent_prompt with the same agent. Only then is it sent.
+6. If the user wants changes, call delegate_to_agent again (the new brief replaces the old one); if they cancel ("olvídalo"), call discard_agent_prompt.
 
 MONITORING:
 - After you deliver a brief, an automatic monitor polls that agent every 30 seconds for up to 30 minutes. When it detects completion, a blocker, or a needed approval, you receive a message tagged "[Monitor automático de agentes]" — it comes from the system, NOT from the user. Relay it in one short natural sentence (e.g. "Señor, Codex terminó la tarea." / "Claude necesita una aprobación.").
@@ -1368,6 +1385,7 @@ Use memory tools when the user shares stable preferences or defaults. Do not cla
       forgetMemoryTool,
       delegateToAgentTool,
       sendAgentPromptTool,
+      discardAgentPromptTool,
       getAgentStatusTool,
       pasteIntoAppTool,
       clickInAppTool,

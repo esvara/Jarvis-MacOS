@@ -12,6 +12,7 @@ enum InputActionRequest: Equatable {
   case agentRead(app: String, authorization: String?)
   case agentSendPrompt(AgentPromptBody, app: String, authorization: String?)
   case agentSubmit(AgentSubmitBody, authorization: String?)
+  case agentDiscard(AgentSubmitBody, authorization: String?)
   case appPaste(AppPasteBody, authorization: String?)
   case appClick(AppClickBody, authorization: String?)
   case appRead(app: String, authorization: String?)

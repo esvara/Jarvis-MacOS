@@ -206,6 +206,22 @@ export class CodexBridge {
     });
   }
 
+  /** Discards a typed-but-unsent brief by clearing the agent's chat box. */
+  async discardPrompt(agent: "codex" | "claude" = "codex"): Promise<CodexCommandResult> {
+    const agentName = agent === "codex" ? "Codex" : "Claude";
+    await this.nativeBridge.resumeActions();
+    const result = await this.nativeBridge.discardAgentPrompt(agent);
+    if (!result.ok) {
+      return await this.recordResult("blocked", result.error ?? `${agentName} could not be controlled natively.`, "", {
+        needsUserApproval: true,
+        nextAction: `Clear ${agentName}'s prompt box manually.`
+      });
+    }
+    return await this.recordResult("stopped", `Jarvis discarded the pending brief in ${agentName}.`, "", {
+      needsUserApproval: false
+    });
+  }
+
   /** Deferred send: presses Enter in the agent's chat box after the user confirmed. */
   async submitPrompt(agent: "codex" | "claude" = "codex"): Promise<CodexCommandResult> {
     const agentName = agent === "codex" ? "Codex" : "Claude";

@@ -276,6 +276,19 @@ final class AppModel: ObservableObject {
     localVoiceHealth = try? await client.localVoiceHealth()
   }
 
+  func saveLocalSttEngine(_ engine: String) async {
+    do {
+      settings = try await client.updateSettings(SettingsPatch(localSttEngine: engine))
+      localVoiceController?.configure(
+        language: assistantLanguage,
+        sttEngine: settings.localSttEngine ?? "apple")
+      errorMessage = ""
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+    syncPhase()
+  }
+
   func saveGrokVoice(_ voice: String) async {
     do {
       settings = try await client.updateSettings(SettingsPatch(grokVoice: voice))
@@ -637,7 +650,7 @@ final class AppModel: ObservableObject {
       voiceState.muted = startMuted
       voiceState.phase = startMuted ? "idle" : "listening"
       listeningModeActive = !startMuted
-      localVoice.configure(language: assistantLanguage)
+      localVoice.configure(language: assistantLanguage, sttEngine: settings.localSttEngine ?? "apple")
       await refreshLocalVoiceHealth()
       if let health = localVoiceHealth, !health.running || !health.modelPulled {
         errorMessage = health.running
@@ -733,7 +746,7 @@ final class AppModel: ObservableObject {
       overlayVisible = true
       errorMessage = ""
       voiceRuntimeErrorMessage = ""
-      localVoice.configure(language: assistantLanguage)
+      localVoice.configure(language: assistantLanguage, sttEngine: settings.localSttEngine ?? "apple")
       await localVoice.startListening()
       return
     }
@@ -777,7 +790,7 @@ final class AppModel: ObservableObject {
         // and listening resumes after the reply. Hotkey stays push-to-talk.
         voiceState.muted = false
         listeningModeActive = true
-        localVoice.configure(language: assistantLanguage)
+        localVoice.configure(language: assistantLanguage, sttEngine: settings.localSttEngine ?? "apple")
         await localVoice.startListening(continuous: true)
       } else {
         voiceState.muted = true

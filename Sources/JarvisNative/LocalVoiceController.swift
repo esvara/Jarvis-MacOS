@@ -34,6 +34,13 @@ final class LocalVoiceController: NSObject {
   private var continuousMode = false
   private var silenceTimer: Timer?
   private let micLevel = MicLevelBox()
+  private var voiceProcessingEnabled = false
+
+  // STT engine: "apple" = SFSpeechRecognizer (needs macOS Dictation enabled);
+  // "parakeet" = local Parakeet-TDT server on 127.0.0.1:4821 (no Dictation).
+  private var sttEngine = "apple"
+  private let pcmAccumulator = PcmAccumulatorBox()
+  private nonisolated static let parakeetURL = URL(string: "http://127.0.0.1:4821/transcribe")!
 
   // Post-delegation monitor state
   private var monitorTimer: Timer?
@@ -48,52 +55,68 @@ final class LocalVoiceController: NSObject {
     synthesizer.delegate = self
   }
 
-  func configure(language: String) {
+  func configure(language: String, sttEngine: String = "apple") {
     self.language = language == "en" ? "en" : "es"
+    self.sttEngine = sttEngine == "parakeet" ? "parakeet" : "apple"
   }
 
-  func startListening(continuous: Bool = false) async {
+  func startListening(continuous: Bool = false, interruptSpeech: Bool = true) async {
     guard !capturing else { return }
     continuousMode = continuous
 
-    let status = await Self.requestSpeechAuthorization()
-    guard status == .authorized else {
-      onError?(
-        language == "en"
-          ? "Speech recognition permission is required for the local provider. Enable it in System Settings > Privacy & Security > Speech Recognition."
-          : "El proveedor local necesita el permiso de Reconocimiento de voz. Actívalo en Ajustes del Sistema > Privacidad y seguridad > Reconocimiento de voz.")
-      return
+    if sttEngine == "apple" {
+      let status = await Self.requestSpeechAuthorization()
+      guard status == .authorized else {
+        onError?(
+          language == "en"
+            ? "Speech recognition permission is required for the local provider. Enable it in System Settings > Privacy & Security > Speech Recognition."
+            : "El proveedor local necesita el permiso de Reconocimiento de voz. Actívalo en Ajustes del Sistema > Privacidad y seguridad > Reconocimiento de voz.")
+        return
+      }
     }
 
-    // Barge-in: pressing the hotkey silences any reply still playing.
-    if synthesizer.isSpeaking {
+    // Barge-in: pressing the hotkey silences any reply still playing. When
+    // resuming capture DURING a reply (hands-free), the speech keeps playing.
+    if interruptSpeech, synthesizer.isSpeaking {
       synthesizer.stopSpeaking(at: .immediate)
+      pendingUtterances = 0
+      sentenceBuffer = ""
     }
-    pendingUtterances = 0
-    sentenceBuffer = ""
-    streamFinished = true
+    if interruptSpeech {
+      streamFinished = true
+    }
 
+    let usingApple = sttEngine == "apple"
     let locale = Locale(identifier: language == "en" ? "en_US" : "es_ES")
-    let recognizer = SFSpeechRecognizer(locale: locale)
-    guard let recognizer, recognizer.isAvailable else {
-      onError?("Speech recognition is not available for \(locale.identifier).")
-      return
+    var request: SFSpeechAudioBufferRecognitionRequest?
+    var recognizer: SFSpeechRecognizer?
+    if usingApple {
+      recognizer = SFSpeechRecognizer(locale: locale)
+      guard let appleRecognizer = recognizer, appleRecognizer.isAvailable else {
+        onError?("Speech recognition is not available for \(locale.identifier).")
+        return
+      }
+      self.recognizer = appleRecognizer
+      let appleRequest = SFSpeechAudioBufferRecognitionRequest()
+      appleRequest.shouldReportPartialResults = true
+      if appleRecognizer.supportsOnDeviceRecognition {
+        appleRequest.requiresOnDeviceRecognition = true
+      }
+      request = appleRequest
+      recognitionRequest = appleRequest
     }
-    self.recognizer = recognizer
-
-    let request = SFSpeechAudioBufferRecognitionRequest()
-    request.shouldReportPartialResults = true
-    if recognizer.supportsOnDeviceRecognition {
-      request.requiresOnDeviceRecognition = true
-    }
-    recognitionRequest = request
     latestTranscript = ""
     recognitionErrorMessage = ""
     NSLog(
-      "LocalVoice: startListening locale=%@ onDevice=%d continuous=%d",
-      locale.identifier, recognizer.supportsOnDeviceRecognition ? 1 : 0, continuous ? 1 : 0)
+      "LocalVoice: startListening engine=%@ locale=%@ continuous=%d",
+      sttEngine, locale.identifier, continuous ? 1 : 0)
 
     let inputNode = audioEngine.inputNode
+    // Echo cancellation: without it, the mic hears Jarvis's own reply and
+    // hands-free barge-in would cut the speech off immediately.
+    if !voiceProcessingEnabled {
+      voiceProcessingEnabled = (try? inputNode.setVoiceProcessingEnabled(true)) != nil
+    }
     let format = inputNode.outputFormat(forBus: 0)
     guard format.sampleRate > 0 else {
       onError?(
@@ -108,8 +131,12 @@ final class LocalVoiceController: NSObject {
     // and trip Swift 6's executor check (dispatch_assert_queue_fail).
     let micLevel = self.micLevel
     micLevel.reset()
+    let accumulator = usingApple ? nil : pcmAccumulator
+    accumulator?.reset(sampleRate: format.sampleRate)
+    let appleRequest = request
     inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in
-      request.append(buffer)
+      appleRequest?.append(buffer)
+      accumulator?.append(buffer)
       micLevel.note(rms: Self.bufferRms(buffer))
     }
 
@@ -126,6 +153,7 @@ final class LocalVoiceController: NSObject {
     if continuousMode {
       startSilenceWatch()
     }
+    guard usingApple, let recognizer, let request else { return }
     // @Sendable for the same reason as the tap above: the recognizer invokes
     // this on a background speech queue.
     recognitionTask = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
@@ -158,12 +186,24 @@ final class LocalVoiceController: NSObject {
 
     audioEngine.stop()
     audioEngine.inputNode.removeTap(onBus: 0)
-    recognitionRequest?.endAudio()
-    // Give the recognizer a moment to finalize the tail of the utterance.
-    try? await Task.sleep(nanoseconds: 400_000_000)
-    recognitionTask?.cancel()
-    recognitionTask = nil
-    recognitionRequest = nil
+    if sttEngine == "parakeet" {
+      onPhaseChange?("thinking")
+      if let wav = pcmAccumulator.wavData16k() {
+        do {
+          latestTranscript = try await Self.transcribeWithParakeet(wav)
+        } catch {
+          recognitionErrorMessage = error.localizedDescription
+          NSLog("LocalVoice: parakeet error: %@", recognitionErrorMessage)
+        }
+      }
+    } else {
+      recognitionRequest?.endAudio()
+      // Give the recognizer a moment to finalize the tail of the utterance.
+      try? await Task.sleep(nanoseconds: 400_000_000)
+      recognitionTask?.cancel()
+      recognitionTask = nil
+      recognitionRequest = nil
+    }
 
     let text = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
@@ -212,6 +252,12 @@ final class LocalVoiceController: NSObject {
         onAssistantReply?(reply)
         if result.delegatedAgent != nil {
           startAgentMonitor(result.delegatedAgent ?? "codex")
+        }
+        if continuousMode {
+          // Resume capture while the reply plays so the user can barge in;
+          // echo cancellation + the raised playback threshold keep Jarvis's
+          // own voice from triggering it.
+          await startListening(continuous: true, interruptSpeech: false)
         }
         settleIfDone()
       } else {
@@ -272,6 +318,7 @@ final class LocalVoiceController: NSObject {
   private func speakChunk(_ text: String) {
     if pendingUtterances == 0 {
       onPhaseChange?("speaking")
+      micLevel.setPlaybackMode(true)
     }
     pendingUtterances += 1
     let utterance = AVSpeechUtterance(string: text)
@@ -281,11 +328,15 @@ final class LocalVoiceController: NSObject {
 
   private func settleIfDone() {
     guard streamFinished, pendingUtterances == 0 else { return }
+    micLevel.setPlaybackMode(false)
     if continuousMode && !capturing {
       // Hands-free conversation: resume listening after the reply finishes.
       Task { @MainActor in
         await self.startListening(continuous: true)
       }
+    } else if continuousMode && capturing {
+      // Capture already resumed during the reply (barge-in support).
+      onPhaseChange?("listening")
     } else {
       onPhaseChange?("idle")
     }
@@ -301,6 +352,19 @@ final class LocalVoiceController: NSObject {
       Task { @MainActor in
         guard let self, self.capturing, self.continuousMode else { return }
         let snapshot = self.micLevel.snapshot()
+
+        // Barge-in: the user starts talking over the reply → cut the speech
+        // and keep listening; the silence rule below then commits their turn.
+        if self.pendingUtterances > 0 || self.synthesizer.isSpeaking {
+          if snapshot.speechDetected, Date().timeIntervalSince(snapshot.lastSpeechAt) < 0.5 {
+            self.synthesizer.stopSpeaking(at: .immediate)
+            self.pendingUtterances = 0
+            self.micLevel.setPlaybackMode(false)
+            self.onPhaseChange?("listening")
+          }
+          return
+        }
+
         if snapshot.speechDetected, Date().timeIntervalSince(snapshot.lastSpeechAt) > 1.6 {
           await self.stopListeningAndRespond()
         }
@@ -367,13 +431,19 @@ final class LocalVoiceController: NSObject {
 
     let name = agent == "claude" ? "Claude" : "Codex"
     let english = language == "en"
+    // Read the agent's own answer (trimmed for speech) so the user hears WHAT
+    // it said, not just that it finished.
+    let summary = String(status.summary.trimmingCharacters(in: .whitespacesAndNewlines).prefix(220))
     var announcement: String?
     if state == "needs_user" {
       announcement = english ? "\(name) needs your approval or input." : "\(name) necesita tu aprobación o intervención."
     } else if state == "offline" {
       announcement = english ? "\(name) is no longer available." : "\(name) dejó de estar disponible."
     } else if state == "idle" && monitorSawWorking {
-      announcement = english ? "\(name) appears to have finished the task." : "\(name) parece haber terminado la tarea."
+      announcement =
+        english
+        ? "\(name) finished." + (summary.isEmpty ? "" : " Summary: \(summary)")
+        : "\(name) terminó." + (summary.isEmpty ? "" : " Resumen: \(summary)")
     }
     guard let announcement else { return }
 
@@ -385,6 +455,42 @@ final class LocalVoiceController: NSObject {
   /// nonisolated: the TCC authorization callback arrives on a background
   /// queue; a MainActor-isolated continuation closure would trip Swift 6's
   /// executor check and crash the app right as the user accepts the prompt.
+  /// Sends a 16 kHz mono WAV to the local Parakeet server and returns the text.
+  private nonisolated static func transcribeWithParakeet(_ wav: Data) async throws -> String {
+    var request = URLRequest(url: parakeetURL)
+    request.httpMethod = "POST"
+    request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
+    request.httpBody = wav
+    request.timeoutInterval = 30
+    do {
+      let (data, response) = try await URLSession.shared.data(for: request)
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      struct Reply: Codable {
+        var text: String?
+        var error: String?
+      }
+      let reply = try? JSONDecoder().decode(Reply.self, from: data)
+      if status == 200, let text = reply?.text {
+        return text
+      }
+      if status == 503 {
+        throw NSError(
+          domain: "LocalVoice", code: 503,
+          userInfo: [NSLocalizedDescriptionKey: "Parakeet is still loading its model — try again in a few seconds."])
+      }
+      throw NSError(
+        domain: "LocalVoice", code: status,
+        userInfo: [NSLocalizedDescriptionKey: reply?.error ?? "Parakeet server returned HTTP \(status)."])
+    } catch let error as NSError where error.domain == NSURLErrorDomain {
+      throw NSError(
+        domain: "LocalVoice", code: error.code,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Parakeet server is not running on 127.0.0.1:4821. Run scripts/setup-parakeet.sh and load the com.jarvis.parakeet LaunchAgent."
+        ])
+    }
+  }
+
   private nonisolated static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
     await withCheckedContinuation { continuation in
       SFSpeechRecognizer.requestAuthorization { status in
@@ -394,12 +500,88 @@ final class LocalVoiceController: NSObject {
   }
 }
 
+/// Thread-safe PCM accumulator for the Parakeet path: the realtime audio tap
+/// appends float samples; on turn commit they are resampled to 16 kHz mono
+/// Int16 and wrapped in a WAV container.
+private final class PcmAccumulatorBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var samples: [Float] = []
+  private var sampleRate: Double = 48_000
+  /// ~2 minutes at 48 kHz — enough for any voice command.
+  private let maxSamples = 48_000 * 120
+
+  func reset(sampleRate: Double) {
+    lock.lock()
+    samples.removeAll(keepingCapacity: true)
+    self.sampleRate = sampleRate
+    lock.unlock()
+  }
+
+  func append(_ buffer: AVAudioPCMBuffer) {
+    guard let data = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+    lock.lock()
+    if samples.count < maxSamples {
+      samples.append(contentsOf: UnsafeBufferPointer(start: data, count: Int(buffer.frameLength)))
+    }
+    lock.unlock()
+  }
+
+  func wavData16k() -> Data? {
+    lock.lock()
+    let source = samples
+    let rate = sampleRate
+    lock.unlock()
+    guard !source.isEmpty, rate > 0 else { return nil }
+
+    let targetRate = 16_000.0
+    let ratio = rate / targetRate
+    let outputCount = Int(Double(source.count) / ratio)
+    guard outputCount > 0 else { return nil }
+
+    var pcm16 = [Int16](repeating: 0, count: outputCount)
+    for i in 0 ..< outputCount {
+      let position = Double(i) * ratio
+      let index = Int(position)
+      let fraction = Float(position - Double(index))
+      let a = source[min(index, source.count - 1)]
+      let b = source[min(index + 1, source.count - 1)]
+      let sample = a + (b - a) * fraction
+      pcm16[i] = Int16(max(-1.0, min(1.0, sample)) * 32767.0)
+    }
+
+    var data = Data(capacity: 44 + pcm16.count * 2)
+    let byteCount = UInt32(pcm16.count * 2)
+    func appendLE(_ value: UInt32) {
+      withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+    }
+    func appendLE16(_ value: UInt16) {
+      withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+    }
+    data.append(contentsOf: Array("RIFF".utf8))
+    appendLE(36 + byteCount)
+    data.append(contentsOf: Array("WAVE".utf8))
+    data.append(contentsOf: Array("fmt ".utf8))
+    appendLE(16)
+    appendLE16(1) // PCM
+    appendLE16(1) // mono
+    appendLE(UInt32(targetRate))
+    appendLE(UInt32(targetRate) * 2)
+    appendLE16(2)
+    appendLE16(16)
+    data.append(contentsOf: Array("data".utf8))
+    appendLE(byteCount)
+    pcm16.withUnsafeBytes { data.append(contentsOf: $0) }
+    return data
+  }
+}
+
 /// Thread-safe mic level tracker shared between the realtime audio tap and
 /// the MainActor silence watcher.
 private final class MicLevelBox: @unchecked Sendable {
   private let lock = NSLock()
   private var speech = false
   private var lastSpeech = Date.distantPast
+  private var playbackMode = false
 
   func reset() {
     lock.lock()
@@ -408,11 +590,21 @@ private final class MicLevelBox: @unchecked Sendable {
     lock.unlock()
   }
 
-  func note(rms: Float) {
-    guard rms > 0.015 else { return }
+  /// While the reply is playing, require a much louder signal to count as
+  /// user speech — echo cancellation is good but not perfect.
+  func setPlaybackMode(_ active: Bool) {
     lock.lock()
-    speech = true
-    lastSpeech = Date()
+    playbackMode = active
+    lock.unlock()
+  }
+
+  func note(rms: Float) {
+    lock.lock()
+    let threshold: Float = playbackMode ? 0.05 : 0.015
+    if rms > threshold {
+      speech = true
+      lastSpeech = Date()
+    }
     lock.unlock()
   }
 

@@ -84,6 +84,20 @@ const localTools = [
   {
     type: "function",
     function: {
+      name: "discard_agent_prompt",
+      description: "Clear the agent's chat box, discarding a brief that was written but not sent. Use when the user says 'olvídalo', 'bórralo', 'cancélalo', 'never mind'.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent: { type: "string", enum: ["codex", "claude"], description: "Agent whose pending brief to discard; default codex." }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "get_agent_status",
       description: "Read the agent app's window through Accessibility and summarize its progress, blockers, or needed approvals.",
       parameters: {
@@ -266,7 +280,8 @@ DELEGATION FLOW:
 1. INTERPRET the user's intent and WRITE a clear, well-phrased brief — never their literal words. Example: "dile a Codex que le eche un ojo al proyecto a ver si hay algo raro" → delegate_to_agent(agent: "codex", prompt: "Revisa el proyecto y reporta cualquier problema o anomalía que encuentres").
 2. delegate_to_agent only TYPES the brief into the agent's current chat — it does not send it. Tell the user it is written and awaiting their confirmation.
 3. When the user confirms ("envíalo", "mándalo", "dale", "send it"), call send_agent_prompt with the same agent.
-4. Open a new conversation (newChat: true) ONLY if the user explicitly asks for a new chat.
+4. If the user wants changes ("mejor dile que...", "cámbialo"), call delegate_to_agent again — the new brief replaces the old one. If they cancel ("olvídalo", "bórralo"), call discard_agent_prompt.
+5. Open a new conversation (newChat: true) ONLY if the user explicitly asks for a new chat.
 LIGHT DESKTOP ACTIONS — for simple things do them directly: quit_app to close an app (confirm first if it may have unsaved work), paste_text_into_app to put text into Notes/TextEdit/etc., click_in_app to press a visible button by its label, press_keys for safe shortcuts. Anything complex still goes to the agents.
 Use web_search to answer questions about current events or facts you are unsure of; summarize the results in one or two spoken sentences and mention the source briefly.
 A delegation only counts as delivered when the tool returns status "sent"; otherwise say exactly what failed. Never claim an agent finished without evidence from get_agent_status.
@@ -486,6 +501,10 @@ export class LocalVoiceAgent {
           newChat: args.newChat === true
         });
         return result;
+      }
+      if (name === "discard_agent_prompt") {
+        const agent = args.agent === "claude" ? "claude" : "codex";
+        return await this.deps.codexBridge.discardPrompt(agent);
       }
       if (name === "send_agent_prompt") {
         const agent = args.agent === "claude" ? "claude" : "codex";

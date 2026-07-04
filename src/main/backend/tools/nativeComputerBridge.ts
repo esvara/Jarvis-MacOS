@@ -47,6 +47,7 @@ const INPUT_SERVER_AGENT_STATUS_URL = `${INPUT_SERVER_BASE_URL}/agent/status`;
 const INPUT_SERVER_AGENT_READ_URL = `${INPUT_SERVER_BASE_URL}/agent/read`;
 const INPUT_SERVER_AGENT_SEND_PROMPT_URL = `${INPUT_SERVER_BASE_URL}/agent/send-prompt`;
 const INPUT_SERVER_AGENT_SUBMIT_URL = `${INPUT_SERVER_BASE_URL}/agent/submit`;
+const INPUT_SERVER_AGENT_DISCARD_URL = `${INPUT_SERVER_BASE_URL}/agent/discard`;
 const INPUT_SERVER_APP_PASTE_URL = `${INPUT_SERVER_BASE_URL}/app/paste`;
 const INPUT_SERVER_APP_CLICK_URL = `${INPUT_SERVER_BASE_URL}/app/click`;
 const INPUT_SERVER_APP_READ_URL = `${INPUT_SERVER_BASE_URL}/app/read`;
@@ -226,6 +227,25 @@ export class NativeComputerBridge {
         ok: false,
         error: error instanceof Error ? error.message : String(error)
       };
+    }
+  }
+
+  /** Clears the agent's chat box — discards a typed-but-unsent brief. */
+  async discardAgentPrompt(app = "codex"): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await fetch(INPUT_SERVER_AGENT_DISCARD_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ app }),
+        signal: AbortSignal.timeout(20_000)
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || json.ok === false) {
+        return { ok: false, error: json.error ?? `Agent native bridge returned ${res.status}` };
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 

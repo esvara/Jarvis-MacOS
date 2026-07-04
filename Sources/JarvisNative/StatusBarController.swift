@@ -414,9 +414,32 @@ private struct StatusBarSettingsView: View {
           }
 
           if (model.settings.voiceProvider ?? "openai") == "local" {
-            Text("Runs fully on-device: Apple speech recognition + Ollama + system voice. No API key, no cloud.")
+            Text("Runs fully on-device: local speech recognition + Ollama + system voice. No API key, no cloud.")
               .font(.system(size: 10))
               .foregroundStyle(.secondary)
+
+            settingsMenuRow(
+              title: "Speech engine",
+              value: (model.settings.localSttEngine ?? "apple") == "parakeet" ? "Parakeet v3 (local server)" : "Apple Dictation",
+              icon: "ear"
+            ) {
+              Button {
+                Task { await model.saveLocalSttEngine("apple") }
+              } label: {
+                menuSelectionLabel(
+                  title: "Apple Dictation · needs macOS Dictation enabled",
+                  selected: (model.settings.localSttEngine ?? "apple") == "apple"
+                )
+              }
+              Button {
+                Task { await model.saveLocalSttEngine("parakeet") }
+              } label: {
+                menuSelectionLabel(
+                  title: "Parakeet v3 · local server, best Spanish accuracy",
+                  selected: (model.settings.localSttEngine ?? "apple") == "parakeet"
+                )
+              }
+            }
 
             if let health = model.localVoiceHealth {
               Text(

@@ -205,6 +205,8 @@ export interface SettingsData {
   hasGeminiApiKey: boolean;
   grokVoice: string;
   geminiVoice: string;
+  /** STT engine for the local provider: Apple dictation or the Parakeet server. */
+  localSttEngine: "apple" | "parakeet";
   hotkey: string;
   voice: string;
   voiceInputMode: VoiceInputMode;
@@ -245,6 +247,7 @@ export interface SettingsUpdate {
   geminiApiKey?: string;
   grokVoice?: string;
   geminiVoice?: string;
+  localSttEngine?: "apple" | "parakeet";
   hotkey?: string;
   voice?: string;
   voiceInputMode?: VoiceInputMode;
