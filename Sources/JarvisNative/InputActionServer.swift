@@ -758,6 +758,10 @@ final class InputActionServer: @unchecked Sendable {
       throw InputActionError.invalidField("\(target.displayName) is not running and could not be opened")
     }
 
+    // Clear BEFORE attempting: a delivery that throws must not leave the
+    // previous brief armed — a later "envíalo" would re-paste and send an
+    // instruction the user already abandoned.
+    pendingBriefs[target.applicationPath] = nil
     let outcome = try await pasteAndVerify(
       trimmed,
       into: app,
@@ -843,24 +847,21 @@ final class InputActionServer: @unchecked Sendable {
     try await activateAndWaitFrontmost(app, displayName: target.displayName)
     let (axApp, textInput) = try await focusAgentTextInput(app)
 
-    if let brief = pendingBriefs[target.applicationPath],
-       let textInput,
-       !pasteLandedAnywhere(brief, rememberedInput: textInput, axApp: axApp) {
-      // The brief is verifiably NOT in the box — recover by re-pasting it.
-      NSLog("InputActionServer: pending brief missing from %@'s box; re-pasting before Enter", target.displayName)
-      let pasteboard = NSPasteboard.general
-      pasteboard.clearContents()
-      pasteboard.setString(brief, forType: .string)
-      try executor.execute(InputAction(
-        type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
-        combo: "cmd,a", scrollX: nil, scrollY: nil,
-        fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
-      try await Task.sleep(for: .milliseconds(150))
-      try executor.execute(InputAction(
-        type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
-        combo: "cmd,v", scrollX: nil, scrollY: nil,
-        fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
-      try await Task.sleep(for: .milliseconds(500))
+    if let brief = pendingBriefs[target.applicationPath] {
+      let needsRepaste: Bool
+      if let textInput {
+        needsRepaste = !pasteLandedAnywhere(brief, rememberedInput: textInput, axApp: axApp)
+      } else {
+        // No AX text input to verify against — the blind-delivery case,
+        // exactly where the original paste may have missed the box. Re-paste
+        // unconditionally: select-all first makes it idempotent when the
+        // brief did land.
+        needsRepaste = true
+      }
+      if needsRepaste {
+        NSLog("InputActionServer: re-pasting pending brief into %@ before Enter (verified missing or unverifiable)", target.displayName)
+        try await selectAllAndPaste(brief)
+      }
     }
 
     try executor.execute(InputAction(
@@ -868,6 +869,25 @@ final class InputActionServer: @unchecked Sendable {
       combo: nil, scrollX: nil, scrollY: nil,
       fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
     pendingBriefs[target.applicationPath] = nil
+  }
+
+  /// Put `text` on the clipboard, select all, and paste — replacing whatever
+  /// the focused text input holds.
+  @MainActor
+  private func selectAllAndPaste(_ text: String) async throws {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+    try executor.execute(InputAction(
+      type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
+      combo: "cmd,a", scrollX: nil, scrollY: nil,
+      fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
+    try await Task.sleep(for: .milliseconds(150))
+    try executor.execute(InputAction(
+      type: .hotkey, x: nil, y: nil, button: nil, text: nil, keys: nil,
+      combo: "cmd,v", scrollX: nil, scrollY: nil,
+      fromX: nil, fromY: nil, toX: nil, toY: nil, path: nil))
+    try await Task.sleep(for: .milliseconds(500))
   }
 
   /// Open (if needed) an arbitrary app by display name and paste text into its

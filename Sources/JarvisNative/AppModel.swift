@@ -123,13 +123,23 @@ final class AppModel: ObservableObject {
     return controller
   }
 
+  /// Fractional seconds matter: backend events are stamped with JS
+  /// toISOString() (milliseconds), and the Live Activity feed merges both by
+  /// lexicographic sort — a second-precision stamp would sort BEFORE any
+  /// same-second event ('.' < 'Z') and misorder the feed.
+  private static let transcriptTimestampFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }()
+
   private func appendLocalTranscript(role: String, text: String) {
     transcript.append(
       TranscriptEntry(
         id: UUID().uuidString,
         role: role,
         text: text,
-        timestamp: ISO8601DateFormatter().string(from: Date()),
+        timestamp: Self.transcriptTimestampFormatter.string(from: Date()),
         agent: role == "assistant" ? "Jarvis" : nil
       ))
     if transcript.count > 200 {
@@ -285,15 +295,32 @@ final class AppModel: ObservableObject {
   /// Guards against overlapping warmups (double-clicking "Reload / warm
   /// models", or an engine switch racing a Connect) — concurrent runs would
   /// interleave their writes to `localWarmupStatus`.
-  private var warmupInFlight = false
+  private var warmupTask: Task<Void, Never>?
 
   /// Warms the local models (LLM into memory, Parakeet inference path) and
   /// publishes a live status the Local Voice card renders. Safe to call on
-  /// connect and after any engine/provider switch.
+  /// connect and after any engine/provider switch. Concurrent calls are
+  /// SERIALIZED, not dropped: a caller that arrives during a warmup waits
+  /// for it and then runs its own pass (its config — e.g. a freshly switched
+  /// STT engine — may differ from the in-flight run's), so callers can rely
+  /// on "after await, the current config is warm" before re-arming capture.
+  private var warmupGeneration = 0
+
   func warmLocalModels() async {
-    guard !warmupInFlight else { return }
-    warmupInFlight = true
-    defer { warmupInFlight = false }
+    if let inFlight = warmupTask {
+      await inFlight.value
+    }
+    warmupGeneration += 1
+    let generation = warmupGeneration
+    let task = Task { await performWarmup() }
+    warmupTask = task
+    await task.value
+    if warmupGeneration == generation {
+      warmupTask = nil
+    }
+  }
+
+  private func performWarmup() async {
     let english = assistantLanguage == "en"
     localWarmupStatus = english ? "Loading local model…" : "Cargando modelo local…"
     async let llm: () = warmLocalLLM()

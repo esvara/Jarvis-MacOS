@@ -27,6 +27,12 @@ final class LocalVoiceController: NSObject {
   // Sentence-streaming TTS state
   private var sentenceBuffer = ""
   private var pendingUtterances = 0
+  /// Bumped by interruptPlayback()/stop(); a reply stream captured under an
+  /// older generation must not speak (its deltas and remainder are dropped).
+  private var speechGeneration = 0
+  /// Consecutive empty capture windows; a backstop so a persistently deaf
+  /// recognizer surfaces an error instead of looping "Listening" forever.
+  private var consecutiveEmptyCaptures = 0
   private var streamFinished = true
 
   // Continuous (hands-free) mode: auto-commit after trailing silence and
@@ -200,16 +206,20 @@ final class LocalVoiceController: NSObject {
     recognitionTask = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
       if let error {
         let message = error.localizedDescription
+        let code = (error as NSError).code
         Task { @MainActor in
           guard let self else { return }
-          // "Canceled"/216 arrive on every normal teardown, and "No speech
-          // detected" (1110) just means the capture window held no words —
-          // the silence path handles that; treating it as a hard failure
-          // tore down hands-free mode after every quiet window.
-          if !message.localizedCaseInsensitiveContains("cancel"),
+          // Benign by CODE (locale-proof): kAFAssistantErrorDomain 1110 =
+          // no speech in the window (equivalent to silence), 216/301 =
+          // cancellation on normal teardown. localizedDescription is
+          // localized/format-dependent, so the substring checks are only a
+          // fallback for other domains.
+          let benignCodes: Set<Int> = [1110, 216, 301]
+          if !benignCodes.contains(code),
+             !message.localizedCaseInsensitiveContains("cancel"),
              !message.localizedCaseInsensitiveContains("no speech") {
             self.recognitionErrorMessage = message
-            Self.vlog("recognition error: \(message)")
+            Self.vlog("recognition error (code \(code)): \(message)")
           }
         }
       }
@@ -263,12 +273,14 @@ final class LocalVoiceController: NSObject {
     let text = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
       let mic = micLevel.snapshot()
-      Self.vlog("empty transcript. engine=\(sttEngine) speechDetected=\(mic.speechDetected) recognitionError=\(recognitionErrorMessage.isEmpty ? "none" : recognitionErrorMessage)")
-      if continuousMode && recognitionErrorMessage.isEmpty {
+      consecutiveEmptyCaptures += 1
+      Self.vlog("empty transcript #\(consecutiveEmptyCaptures). engine=\(sttEngine) speechDetected=\(mic.speechDetected) recognitionError=\(recognitionErrorMessage.isEmpty ? "none" : recognitionErrorMessage)")
+      if continuousMode && recognitionErrorMessage.isEmpty && consecutiveEmptyCaptures < 5 {
         // No hard error: either true silence, or audio that produced no words
         // (echo bleed from the reply, background noise, a cough). Either way,
         // KEEP the hands-free conversation open — tearing it down here left
-        // the mic looking on while nothing listened.
+        // the mic looking on while nothing listened. The counter is the
+        // backstop: a persistently deaf recognizer must not loop silently.
         await startListening(continuous: true)
         return
       }
@@ -293,17 +305,35 @@ final class LocalVoiceController: NSObject {
     }
 
     Self.vlog("turn committed. engine=\(sttEngine) transcriptChars=\(text.count)")
+    consecutiveEmptyCaptures = 0
     onUserTranscript?(text)
     onPhaseChange?("thinking")
     sentenceBuffer = ""
     streamFinished = false
+    // Interrupt support: if Stop/mute bumps speechGeneration while this
+    // stream is in flight, its remaining deltas must not be spoken.
+    let generation = speechGeneration
     do {
       let result = try await client.localVoiceTurnStream(text: text, language: language) { [weak self] delta in
         Task { @MainActor in
-          self?.consumeDelta(delta)
+          guard let self, self.speechGeneration == generation else { return }
+          self.consumeDelta(delta)
         }
       }
       streamFinished = true
+      guard speechGeneration == generation else {
+        // The user cut this reply while it was still generating: keep the
+        // text in the transcript and monitor a delegation, but stay silent —
+        // interruptPlayback/stop already settled phase and capture.
+        Self.vlog("reply generation \(generation) discarded after interrupt")
+        if result.ok, let reply = result.reply, !reply.isEmpty {
+          onAssistantReply?(reply)
+          if result.delegatedAgent != nil {
+            startAgentMonitor(result.delegatedAgent ?? "codex")
+          }
+        }
+        return
+      }
       flushSentenceBuffer()
       if result.ok, let reply = result.reply, !reply.isEmpty {
         onAssistantReply?(reply)
@@ -339,6 +369,9 @@ final class LocalVoiceController: NSObject {
       return
     }
     Self.vlog("interrupt: cutting the current reply")
+    // Invalidate the in-flight turn stream: its pending deltas and remainder
+    // must not re-queue speech after this cut.
+    speechGeneration += 1
     synthesizer.stopSpeaking(at: .immediate)
     pendingUtterances = 0
     sentenceBuffer = ""
@@ -357,6 +390,7 @@ final class LocalVoiceController: NSObject {
   func stop() {
     stopAgentMonitor()
     stopSilenceWatch()
+    speechGeneration += 1
     continuousMode = false
     if capturing {
       capturing = false
@@ -466,13 +500,29 @@ final class LocalVoiceController: NSObject {
       // Capture already resumed during the reply (barge-in support). The
       // user did NOT barge in, so anything the mic flagged as speech during
       // playback was echo bleed from Jarvis's own reply — clear it, or the
-      // silence watcher instantly commits a garbage turn (stale
-      // speechDetected with lastSpeechAt > 1.6 s ago) and the accumulated
-      // echo audio poisons the next transcription.
-      Self.vlog("reply finished; capture already live (barge-in armed) — clearing echo-tainted mic state")
+      // silence watcher instantly commits a garbage turn and the accumulated
+      // echo poisons the next transcription.
+      Self.vlog("reply finished; capture already live (barge-in armed) — clearing echo-tainted state")
       micLevel.reset()
-      pcmAccumulator.reset(sampleRate: pcmAccumulator.currentSampleRate())
-      onPhaseChange?("listening")
+      if sttEngine == "apple" {
+        // The SFSpeech request is CUMULATIVE from its creation (mid-reply):
+        // echo words it transcribed during playback would prefix the user's
+        // next turn. Rebuild capture so the next turn starts a fresh request.
+        capturing = false
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+        latestTranscript = ""
+        Task { @MainActor in
+          guard self.continuousMode, !self.capturing else { return }
+          await self.startListening(continuous: true)
+        }
+      } else {
+        pcmAccumulator.reset(sampleRate: pcmAccumulator.currentSampleRate())
+        onPhaseChange?("listening")
+      }
     } else {
       onPhaseChange?("idle")
     }
